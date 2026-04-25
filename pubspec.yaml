@@ -1,0 +1,61 @@
+name: ai_chat
+description: AI Chat — Local/Cloud LLM Assistant
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  get: ^4.6.6
+
+  # Persistent Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Local AI Inference (Android)
+  llama_flutter_android: ^0.2.0
+
+
+  # Networking
+  dio: ^5.7.0
+  http: ^1.2.0
+
+  # Firebase (Push Updates)
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.0
+
+  # File System & Permissions
+  path_provider: ^2.1.0
+  permission_handler: ^11.3.0
+
+  # Image Support
+  image_picker: ^1.1.0
+
+  # UI
+  google_fonts: ^6.2.0
+  flutter_markdown: ^0.7.4
+
+  # Utils
+  uuid: ^4.5.0
+  intl: ^0.19.0
+
+  # Background / Boot Persistence
+  flutter_background_service: ^5.0.5
+  flutter_local_notifications: ^17.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+dependency_overrides:
+  llama_flutter_android:
+    path: local_plugins/llama_flutter_android
+
+flutter:
+  uses-material-design: true
