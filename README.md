@@ -91,9 +91,6 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 | Android  | ✅ Yes         | ✅ Yes     | GPU offload via Vulkan; minSdk 26 |
 | iOS      | ✅ Yes         | ✅ Yes     | Metal GPU acceleration |
 | Web      | ❌ No          | ✅ Yes     | Cloud-only (local coming soon) |
-| macOS    | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
-| Linux    | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
-| Windows  | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
 
 ---
 
