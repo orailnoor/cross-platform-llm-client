@@ -9,8 +9,8 @@ import 'device_info_service.dart';
 import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart' as platform;
 
 /// Cross-platform inference service.
-/// - Android: uses llama_flutter_android for local GGUF models
-/// - iOS/Web: cloud-only mode (local inference not available)
+/// - Android / iOS: uses llama_flutter_android for local GGUF models
+/// - Web: cloud-only mode (local inference coming soon)
 class InferenceService extends GetxService {
   final HiveService _hive = Get.find<HiveService>();
 

@@ -19,7 +19,7 @@ class LoadResult {
   });
 }
 
-/// Android inference engine — wraps llama_flutter_android.
+/// Android & iOS inference engine — wraps llama_flutter_android.
 class InferenceEngine {
   LlamaController? _controller;
   StreamSubscription? _subscription;

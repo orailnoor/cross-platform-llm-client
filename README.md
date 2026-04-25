@@ -77,7 +77,8 @@ API keys are stored in Hive and never transmitted anywhere except to the provide
 ### Cross-Platform Abstraction
 Local inference is conditionally compiled:
 - **Android** → `inference_android.dart` (full llama.cpp engine)
-- **iOS / Web** → `inference_stub.dart` (cloud-only, graceful degradation)
+- **Web** → `inference_stub.dart` (cloud-only, local coming soon)
+- **iOS** → `inference_android.dart` (full llama.cpp engine via Metal GPU)
 
 The `InferenceService` exposes `supportsLocalInference` so the UI can hide local-model UI on unsupported platforms.
 
@@ -88,11 +89,11 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 | Platform | Local Inference | Cloud APIs | Notes |
 |----------|----------------|------------|-------|
 | Android  | ✅ Yes         | ✅ Yes     | GPU offload via Vulkan; minSdk 26 |
-| iOS      | ❌ No          | ✅ Yes     | Cloud-only mode |
-| Web      | ❌ No          | ✅ Yes     | Cloud-only mode |
-| macOS    | ❌ No          | ✅ Yes     | Not actively tested |
-| Linux    | ❌ No          | ✅ Yes     | Not actively tested |
-| Windows  | ❌ No          | ✅ Yes     | Not actively tested |
+| iOS      | ✅ Yes         | ✅ Yes     | Metal GPU acceleration |
+| Web      | ❌ No          | ✅ Yes     | Cloud-only (local coming soon) |
+| macOS    | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
+| Linux    | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
+| Windows  | ❌ No          | ✅ Yes     | Cloud-only (not actively tested) |
 
 ---
 
