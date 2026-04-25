@@ -140,15 +140,6 @@ flutter build web --release
 
 ---
 
-## Security & Privacy
-
-- **No API keys are bundled.** All keys are entered by the user and stored locally in Hive.
-- **No analytics or telemetry** is embedded.
-- **No firebase config files** are shipped in this repository. You must add your own `google-services.json` / `GoogleService-Info.plist` if you want Firebase functionality.
-- If you fork this project, verify that no secrets are committed before pushing.
-
----
-
 ## License
 
 MIT — see [LICENSE](./LICENSE) for details.
