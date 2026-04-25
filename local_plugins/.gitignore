@@ -1,0 +1,19 @@
+# Build artifacts
+.cxx/
+.dart_tool/
+build/
+*.so
+*.o
+*.a
+*.dll
+*.dylib
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Flutter
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
