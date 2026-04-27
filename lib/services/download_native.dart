@@ -21,7 +21,7 @@ Future<List<String>> getDownloadedModels(String modelsDir) async {
   if (!await dir.exists()) return [];
   return dir
       .listSync()
-      .where((f) => f.path.endsWith('.gguf'))
+      .where((f) => f.path.endsWith('.gguf') || f.path.endsWith('.safetensors'))
       .map((f) => f.path.split('/').last)
       .toList();
 }

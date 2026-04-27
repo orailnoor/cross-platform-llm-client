@@ -14,10 +14,12 @@ class AppConstants {
   static const String keyAnthropicKey = 'anthropic_api_key';
   static const String keyGoogleKey = 'google_api_key';
   static const String keyKimiKey = 'kimi_api_key';
+  static const String keyStabilityKey = 'stability_api_key';
   static const String keyOpenaiModel = 'openai_model';
   static const String keyAnthropicModel = 'anthropic_model';
   static const String keyGoogleModel = 'google_model';
   static const String keyKimiModel = 'kimi_model';
+  static const String keyStabilityModel = 'stability_model';
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
   static const String keyTemperature = 'temperature';
@@ -121,6 +123,42 @@ class AppConstants {
       'description': 'Ultra-lightweight text model',
       'template': 'llama3',
     },
+    {
+      'name': 'DreamShaper 8 LCM (SD 1.5)',
+      'filename': 'DreamShaper8_LCM.safetensors',
+      'url':
+          'https://huggingface.co/Lykon/dreamshaper-8-lcm/resolve/main/DreamShaper8_LCM.safetensors',
+      'size': '2.0 GB',
+      'description': 'Extremely fast 4-step local image generation',
+      'template': 'sd',
+    },
+    {
+      'name': 'CyberRealistic V4 (SD 1.5)',
+      'filename': 'cyberrealistic_v42.safetensors',
+      'url':
+          'https://huggingface.co/philz1337x/cyberrealistic-v4.2/resolve/main/cyberrealistic_v42.safetensors',
+      'size': '2.0 GB',
+      'description': 'Photorealistic, uncensored local image generation',
+      'template': 'sd',
+    },
+    {
+      'name': 'AnyLoRA (SD 1.5)',
+      'filename': 'AnyLoRA_noVae_fp16-pruned.safetensors',
+      'url':
+          'https://huggingface.co/Lykon/AnyLoRA/resolve/main/AnyLoRA_noVae_fp16-pruned.safetensors',
+      'size': '2.0 GB',
+      'description': 'Highly versatile Anime / Stylized image generator',
+      'template': 'sd',
+    },
+    {
+      'name': 'SDXS 512 (Experimental)',
+      'filename': 'sdxs-512-tinySDdistilled_Q8_0.gguf',
+      'url':
+          'https://huggingface.co/concedo/sdxs-512-tinySDdistilled-GGUF/resolve/main/sdxs-512-tinySDdistilled_Q8_0.gguf',
+      'size': '0.9 GB',
+      'description': 'Experimental 1-step ultra-fast image generation',
+      'template': 'sd',
+    },
   ];
 
   // Cloud API Endpoints
@@ -128,4 +166,5 @@ class AppConstants {
   static const String anthropicEndpoint = 'https://api.anthropic.com/v1/messages';
   static const String googleEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models';
   static const String kimiEndpoint = 'https://api.moonshot.ai/v1/chat/completions';
+  static const String stabilityEndpoint = 'https://api.stability.ai/v2beta/stable-image/generate/sd3';
 }

@@ -209,7 +209,7 @@ class SettingsView extends GetView<SettingsController> {
         padding: const EdgeInsets.all(4),
         child: Column(
           children: [
-            for (final provider in ['kimi', 'openai', 'anthropic', 'google'])
+            for (final provider in ['kimi', 'openai', 'anthropic', 'google', 'stability'])
               RadioListTile<String>(
                 value: provider,
                 groupValue: controller.cloudProvider.value,
@@ -565,6 +565,8 @@ class SettingsView extends GetView<SettingsController> {
         return 'Google Gemini';
       case 'kimi':
         return 'Kimi (Moonshot)';
+      case 'stability':
+        return 'Stability AI (Image Gen)';
       default:
         return key;
     }

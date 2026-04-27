@@ -1,4 +1,7 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
+import 'package:path/path.dart' as p;
 import '../core/constants.dart';
 import '../models/ai_model.dart';
 import '../services/download_service.dart';
@@ -8,7 +11,8 @@ class ModelController extends GetxController {
   final DownloadService _download = Get.find<DownloadService>();
   final InferenceService _inference = Get.find<InferenceService>();
 
-  Map<String, DownloadProgress> get activeDownloads => _download.activeDownloads;
+  Map<String, DownloadProgress> get activeDownloads =>
+      _download.activeDownloads;
 
   final availableModels = <AiModel>[].obs;
   final downloadedFiles = <String>[].obs;
@@ -69,5 +73,31 @@ class ModelController extends GetxController {
 
   Future<void> unloadModel() async {
     await _inference.unloadModel();
+  }
+
+  Future<void> importModelFromStorage() async {
+    try {
+      FilePickerResult? result = await FilePicker.pickFiles(
+        type: FileType.any,
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final filename = p.basename(file.path);
+
+        final modelsDir = await _download.modelsDir;
+        final destPath = '$modelsDir/$filename';
+
+        Get.snackbar('Importing', 'Copying $filename to app storage...',
+            snackPosition: SnackPosition.BOTTOM);
+        await file.copy(destPath);
+
+        await refreshDownloaded();
+        Get.snackbar('Import Successful', 'Model $filename imported.',
+            snackPosition: SnackPosition.BOTTOM);
+      }
+    } catch (e) {
+      Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
+    }
   }
 }

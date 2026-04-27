@@ -39,6 +39,10 @@ class InferenceService extends GetxService {
     }
     if (isLoadingModel.value) return 'ERROR: Model is already loading.';
 
+    if (modelPath.toLowerCase().endsWith('.safetensors')) {
+      return 'ERROR: Cannot load image generation models (.safetensors) into the local text engine. Native local image generation requires the upcoming stable-diffusion engine update. Use Cloud Stability AI for now.';
+    }
+
     try {
       await unloadModel();
       isLoadingModel.value = true;

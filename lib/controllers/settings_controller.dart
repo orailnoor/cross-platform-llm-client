@@ -16,10 +16,12 @@ class SettingsController extends GetxController {
   final anthropicKey = ''.obs;
   final googleKey = ''.obs;
   final kimiKey = ''.obs;
+  final stabilityKey = ''.obs;
   final openaiModel = 'gpt-5.2'.obs;
   final anthropicModel = 'claude-sonnet-4-6'.obs;
   final googleModel = 'gemini-2.5-flash'.obs;
   final kimiModel = 'kimi-k2.6'.obs;
+  final stabilityModel = 'sd3.5-flash'.obs;
   final temperature = 0.1.obs;
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
@@ -29,11 +31,13 @@ class SettingsController extends GetxController {
   final anthropicKeyController = TextEditingController();
   final googleKeyController = TextEditingController();
   final kimiKeyController = TextEditingController();
+  final stabilityKeyController = TextEditingController();
 
   final openaiModelController = TextEditingController();
   final anthropicModelController = TextEditingController();
   final googleModelController = TextEditingController();
   final kimiModelController = TextEditingController();
+  final stabilityModelController = TextEditingController();
 
   Timer? _apiKeyDebounceTimer;
   Timer? _modelDebounceTimer;
@@ -50,10 +54,12 @@ class SettingsController extends GetxController {
     anthropicKeyController.dispose();
     googleKeyController.dispose();
     kimiKeyController.dispose();
+    stabilityKeyController.dispose();
     openaiModelController.dispose();
     anthropicModelController.dispose();
     googleModelController.dispose();
     kimiModelController.dispose();
+    stabilityModelController.dispose();
     _apiKeyDebounceTimer?.cancel();
     _modelDebounceTimer?.cancel();
     super.onClose();
@@ -68,10 +74,12 @@ class SettingsController extends GetxController {
     anthropicKey.value = _hive.getSetting(AppConstants.keyAnthropicKey) ?? '';
     googleKey.value = _hive.getSetting(AppConstants.keyGoogleKey) ?? '';
     kimiKey.value = _hive.getSetting(AppConstants.keyKimiKey) ?? '';
+    stabilityKey.value = _hive.getSetting(AppConstants.keyStabilityKey) ?? '';
     openaiModel.value = _hive.getSetting(AppConstants.keyOpenaiModel, defaultValue: 'gpt-5.2') ?? 'gpt-5.2';
     anthropicModel.value = _hive.getSetting(AppConstants.keyAnthropicModel, defaultValue: 'claude-sonnet-4-6') ?? 'claude-sonnet-4-6';
     googleModel.value = _hive.getSetting(AppConstants.keyGoogleModel, defaultValue: 'gemini-2.5-flash') ?? 'gemini-2.5-flash';
     kimiModel.value = _hive.getSetting(AppConstants.keyKimiModel, defaultValue: 'kimi-k2.6') ?? 'kimi-k2.6';
+    stabilityModel.value = _hive.getSetting(AppConstants.keyStabilityModel, defaultValue: 'sd3.5-flash') ?? 'sd3.5-flash';
     temperature.value = _hive.getSetting(AppConstants.keyTemperature, defaultValue: AppConstants.defaultTemperature) ?? AppConstants.defaultTemperature;
     maxTokens.value = _hive.getSetting(AppConstants.keyMaxTokens, defaultValue: AppConstants.defaultMaxTokens) ?? AppConstants.defaultMaxTokens;
     contextSize.value = _hive.getSetting(AppConstants.keyContextSize, defaultValue: AppConstants.defaultContextSize) ?? AppConstants.defaultContextSize;
@@ -81,11 +89,13 @@ class SettingsController extends GetxController {
     anthropicKeyController.text = anthropicKey.value;
     googleKeyController.text = googleKey.value;
     kimiKeyController.text = kimiKey.value;
+    stabilityKeyController.text = stabilityKey.value;
 
     openaiModelController.text = openaiModel.value;
     anthropicModelController.text = anthropicModel.value;
     googleModelController.text = googleModel.value;
     kimiModelController.text = kimiModel.value;
+    stabilityModelController.text = stabilityModel.value;
   }
 
   TextEditingController apiKeyControllerFor(String provider) {
@@ -96,6 +106,8 @@ class SettingsController extends GetxController {
         return googleKeyController;
       case 'kimi':
         return kimiKeyController;
+      case 'stability':
+        return stabilityKeyController;
       default:
         return openaiKeyController;
     }
@@ -109,6 +121,8 @@ class SettingsController extends GetxController {
         return googleModelController;
       case 'kimi':
         return kimiModelController;
+      case 'stability':
+        return stabilityModelController;
       default:
         return openaiModelController;
     }
@@ -147,6 +161,11 @@ class SettingsController extends GetxController {
         kimiKeyController.text = trimmed;
         await _hive.setSetting(AppConstants.keyKimiKey, trimmed);
         break;
+      case 'stability':
+        stabilityKey.value = trimmed;
+        stabilityKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyStabilityKey, trimmed);
+        break;
     }
   }
 
@@ -182,6 +201,11 @@ class SettingsController extends GetxController {
         kimiModel.value = model;
         kimiModelController.text = model;
         await _hive.setSetting(AppConstants.keyKimiModel, model);
+        break;
+      case 'stability':
+        stabilityModel.value = model;
+        stabilityModelController.text = model;
+        await _hive.setSetting(AppConstants.keyStabilityModel, model);
         break;
     }
   }

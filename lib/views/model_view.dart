@@ -16,6 +16,11 @@ class ModelView extends GetView<ModelController> {
       appBar: AppBar(
         title: Text('Models', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: 'Import from Storage',
+            onPressed: () => controller.importModelFromStorage(),
+          ),
           Obx(() {
             final inference = Get.find<InferenceService>();
             if (inference.isModelLoaded.value) {

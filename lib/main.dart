@@ -57,10 +57,20 @@ void _tryReloadModel() async {
   if (!inference.supportsLocalInference) return;
 
   final hive = Get.find<HiveService>();
-  final modelPath = hive.getSetting<String>('local_model_path');
-  final modelName = hive.getSetting<String>('local_model_name');
-  if (modelPath != null && modelPath.isNotEmpty) {
-    await inference.loadModel(modelPath, modelName: modelName);
+  final modelName = hive.getSetting<String>(AppConstants.keyLocalModelName);
+  
+  if (modelName != null && modelName.isNotEmpty) {
+    // Reconstruct dynamic path to prevent iOS App Container UUID changes breaking the load
+    final downloadService = Get.find<DownloadService>();
+    final dynamicPath = await downloadService.modelPath(modelName);
+    
+    if (await downloadService.isModelDownloaded(modelName)) {
+      await inference.loadModel(dynamicPath, modelName: modelName);
+    } else {
+      // Model file is missing, clear the active model settings
+      await hive.setSetting(AppConstants.keyLocalModelPath, '');
+      await hive.setSetting(AppConstants.keyLocalModelName, '');
+    }
   }
 }
 

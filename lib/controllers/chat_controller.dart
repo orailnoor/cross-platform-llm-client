@@ -203,12 +203,19 @@ class ChatController extends GetxController {
       isStreaming.value = false;
       streamingResponse.value = '';
 
+      String? outImageBase64;
+      if (rawResponse.startsWith('[IMAGE_BASE64]')) {
+        outImageBase64 = rawResponse.substring('[IMAGE_BASE64]'.length);
+        rawResponse = 'Here is your generated image:';
+      }
+
       // Display response directly (no command processing)
       final aiMsg = ChatMessage(
         id: _uuid.v4(),
         chatId: currentSessionId.value,
         role: 'assistant',
         content: rawResponse,
+        imageBase64: outImageBase64,
       );
       messages.add(aiMsg);
       _hive.saveMessage(aiMsg.id, aiMsg.toMap());
@@ -265,7 +272,8 @@ class ChatController extends GetxController {
       final provider = _hive.getSetting(AppConstants.keyCloudProvider) ?? 'kimi';
       modelName = _hive.getSetting(provider == 'openai' ? AppConstants.keyOpenaiModel : 
                                  provider == 'anthropic' ? AppConstants.keyAnthropicModel :
-                                 provider == 'google' ? AppConstants.keyGoogleModel : AppConstants.keyKimiModel) ?? '';
+                                 provider == 'google' ? AppConstants.keyGoogleModel : 
+                                 provider == 'stability' ? AppConstants.keyStabilityModel : AppConstants.keyKimiModel) ?? '';
     }
 
     final lower = modelName.toLowerCase();

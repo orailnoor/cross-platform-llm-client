@@ -46,7 +46,9 @@ class ChatView extends GetView<ChatController> {
                     ? settings.anthropicModel.value
                     : provider == 'google'
                         ? settings.googleModel.value
-                        : settings.kimiModel.value;
+                        : provider == 'stability'
+                            ? settings.stabilityModel.value
+                            : settings.kimiModel.value;
             modelLabel = model;
           }
 
@@ -95,7 +97,8 @@ class ChatView extends GetView<ChatController> {
                     ),
                     if (isLocal && inference.isGpuAccelerated.value) ...[
                       const SizedBox(width: 4),
-                      Icon(Icons.bolt, size: 12, color: AppColors.warning),
+                      const Icon(Icons.bolt,
+                          size: 12, color: AppColors.warning),
                       Text(
                         'GPU',
                         style: GoogleFonts.inter(
@@ -711,12 +714,13 @@ class _TypingDotsState extends State<_TypingDots>
             final delay = i * 0.2;
             final t = (_controller.value - delay).clamp(0.0, 1.0);
             // Bounce: scale goes 1→1.4→1 using a sin curve
-            final scale = 1.0 + 0.4 * (t < 0.5
-                ? (t * 2) // ramp up
-                : (1 - (t - 0.5) * 2).clamp(0.0, 1.0)); // ramp down
-            final opacity = 0.3 + 0.7 * (t < 0.5
-                ? (t * 2)
-                : (1 - (t - 0.5) * 2).clamp(0.0, 1.0));
+            final scale = 1.0 +
+                0.4 *
+                    (t < 0.5
+                        ? (t * 2) // ramp up
+                        : (1 - (t - 0.5) * 2).clamp(0.0, 1.0)); // ramp down
+            final opacity = 0.3 +
+                0.7 * (t < 0.5 ? (t * 2) : (1 - (t - 0.5) * 2).clamp(0.0, 1.0));
 
             return Padding(
               padding: EdgeInsets.only(right: i < 2 ? 4 : 0),
