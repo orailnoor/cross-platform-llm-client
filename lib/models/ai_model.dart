@@ -6,6 +6,7 @@ class AiModel {
   final String description;
   final String template;
   final bool isVision;
+  final bool isImported;
 
   const AiModel({
     required this.name,
@@ -15,6 +16,7 @@ class AiModel {
     required this.description,
     required this.template,
     this.isVision = false,
+    this.isImported = false,
   });
 
   factory AiModel.fromMap(Map<String, String> map) => AiModel(
@@ -25,5 +27,6 @@ class AiModel {
         description: map['description'] ?? '',
         template: map['template'] ?? 'chatml',
         isVision: map['vision'] == 'true',
+        isImported: map['imported'] == 'true',
       );
 }

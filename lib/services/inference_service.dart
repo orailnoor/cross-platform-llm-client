@@ -18,8 +18,11 @@ class InferenceService extends GetxService {
   final isModelLoaded = false.obs;
   final isGenerating = false.obs;
   final isLoadingModel = false.obs;
+  final isVisionLoaded = false.obs;
+  final loadingModelName = ''.obs;
   final loadedModelName = ''.obs;
   final tokenCount = 0.obs;
+  final tokensPerSecond = 0.0.obs;
   final modelLoadProgress = 0.0.obs;
   final generationSource = ''.obs;
   final streamingText = ''.obs;
@@ -46,6 +49,7 @@ class InferenceService extends GetxService {
     try {
       await unloadModel();
       isLoadingModel.value = true;
+      loadingModelName.value = modelName ?? modelPath.split('/').last;
       modelLoadProgress.value = 0.0;
 
       _engine = platform.InferenceEngine();
@@ -66,6 +70,7 @@ class InferenceService extends GetxService {
 
       isModelLoaded.value = result.success;
       isLoadingModel.value = false;
+      loadingModelName.value = '';
       modelLoadProgress.value = 1.0;
       loadedModelName.value = modelName ?? modelPath.split('/').last;
       gpuName.value = result.gpuName;
@@ -79,6 +84,7 @@ class InferenceService extends GetxService {
     } catch (e) {
       isModelLoaded.value = false;
       isLoadingModel.value = false;
+      loadingModelName.value = '';
       modelLoadProgress.value = 0.0;
       return 'ERROR: Failed to load model — $e';
     }
@@ -89,7 +95,9 @@ class InferenceService extends GetxService {
     await _engine?.dispose();
     _engine = null;
     isModelLoaded.value = false;
+    isVisionLoaded.value = false;
     loadedModelName.value = '';
+    loadingModelName.value = '';
     gpuLayersUsed.value = 0;
     isGpuAccelerated.value = false;
     gpuName.value = '';
@@ -100,6 +108,7 @@ class InferenceService extends GetxService {
     String? systemPrompt,
     List<Map<String, String>>? conversationHistory,
     String source = 'chat',
+    String? imagePath,
     void Function(String token)? onToken,
   }) async {
     if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
@@ -120,8 +129,11 @@ class InferenceService extends GetxService {
 
     isGenerating.value = true;
     tokenCount.value = 0;
+    tokensPerSecond.value = 0.0;
     generationSource.value = source;
     streamingText.value = '';
+
+    final startTime = DateTime.now();
 
     try {
       final temperature = _hive.getSetting<double>(
@@ -141,9 +153,14 @@ class InferenceService extends GetxService {
         modelName: loadedModelName.value,
         maxTokens: maxTokens,
         temperature: temperature,
+        imagePath: imagePath,
         onToken: (token) {
           tokenCount.value++;
           streamingText.value += token;
+          final elapsedSeconds = DateTime.now().difference(startTime).inMilliseconds / 1000.0;
+          if (elapsedSeconds > 0) {
+            tokensPerSecond.value = tokenCount.value / elapsedSeconds;
+          }
           onToken?.call(token);
         },
       );

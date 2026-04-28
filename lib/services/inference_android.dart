@@ -24,6 +24,7 @@ class InferenceEngine {
   LlamaController? _controller;
   StreamSubscription? _subscription;
   Timer? _idleTimer;
+  void Function()? _onStop;
 
   Future<LoadResult> loadModel({
     required String modelPath,
@@ -111,6 +112,7 @@ class InferenceEngine {
     required String modelName,
     required int maxTokens,
     required double temperature,
+    String? imagePath,
     void Function(String token)? onToken,
   }) async {
     if (_controller == null) throw Exception('No model loaded');
@@ -124,14 +126,19 @@ class InferenceEngine {
         completed = true;
         _idleTimer?.cancel();
         _subscription?.cancel();
+        _onStop = null;
         if (!completer.isCompleted) completer.complete(result);
       }
     }
 
+    _onStop = () {
+      finish(buffer.toString());
+    };
+
     // ── Use generateChat() for native template handling ──
     Stream<String>? stream;
     try {
-      final messages = _buildChatMessages(prompt, conversationHistory, systemPrompt);
+      final messages = _buildChatMessages(prompt, conversationHistory, systemPrompt, imagePath: imagePath);
       stream = _controller!.generateChat(
         messages: messages,
         template: null,
@@ -208,6 +215,7 @@ class InferenceEngine {
     _idleTimer?.cancel();
     _subscription?.cancel();
     try { await _controller?.stop(); } catch (_) {}
+    _onStop?.call();
   }
 
   Future<void> dispose() async {
@@ -226,8 +234,9 @@ class InferenceEngine {
   List<ChatMessage> _buildChatMessages(
     String prompt,
     List<Map<String, String>>? history,
-    String systemPrompt,
-  ) {
+    String systemPrompt, {
+    String? imagePath,
+  }) {
     final messages = <ChatMessage>[];
     messages.add(ChatMessage(role: 'system', content: systemPrompt));
 

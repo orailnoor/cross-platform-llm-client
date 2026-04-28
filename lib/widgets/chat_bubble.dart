@@ -63,14 +63,30 @@ class ChatBubble extends StatelessWidget {
               ),
             ),
 
-            // Timestamp
-            const SizedBox(height: 4),
-            Text(
-              _formatTime(message.timestamp),
-              style: GoogleFonts.inter(
-                fontSize: 10,
-                color: Theme.of(context).hintColor,
-              ),
+            // Timestamp and Speed
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (message.tokensPerSec != null && message.tokensPerSec! > 0)
+                  Text(
+                    '⚡ ${message.tokensPerSec!.toStringAsFixed(1)} tok/s',
+                    style: GoogleFonts.firaCode(
+                      fontSize: 9,
+                      color: Theme.of(context).hintColor.withOpacity(0.6),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  )
+                else
+                  const SizedBox.shrink(),
+                Text(
+                  _formatTime(message.timestamp),
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: Theme.of(context).hintColor,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

@@ -227,25 +227,48 @@ class ChatView extends GetView<ChatController> {
             bottomLeft: Radius.circular(4),
           ),
         ),
-        child: text.isEmpty
-            ? _buildTypingIndicator(context)
-            : Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      text,
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        color: Theme.of(context).colorScheme.onSurface,
-                        height: 1.4,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            text.isEmpty
+                ? _buildTypingIndicator(context)
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          text,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            color: Theme.of(context).colorScheme.onSurface,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                      // Blinking cursor at the end while still generating
+                      _BlinkingCursor(color: Theme.of(context).hintColor),
+                    ],
+                  ),
+            if (text.isNotEmpty)
+              Obx(() {
+                final inference = Get.find<InferenceService>();
+                if (inference.tokensPerSecond.value > 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      '⚡ ${inference.tokensPerSecond.value.toStringAsFixed(1)} tok/s',
+                      style: GoogleFonts.firaCode(
+                        fontSize: 10,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                  ),
-                  // Blinking cursor at the end while still generating
-                  _BlinkingCursor(color: Theme.of(context).hintColor),
-                ],
-              ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }),
+          ],
+        ),
       ),
     );
   }
@@ -360,16 +383,25 @@ class ChatView extends GetView<ChatController> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 // Image picker
-                IconButton(
-                  icon: Icon(
-                    Icons.image_outlined,
-                    color: Theme.of(context).hintColor,
-                    size: 22,
-                  ),
-                  onPressed: controller.pickImage,
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                ),
+                Obx(() {
+                  final settings = Get.find<SettingsController>();
+                  final inference = Get.find<InferenceService>();
+                  final isLocal = settings.inferenceMode.value == 'local';
+                  final showPicker = !isLocal || inference.isVisionLoaded.value;
+
+                  if (!showPicker) return const SizedBox.shrink();
+
+                  return IconButton(
+                    icon: Icon(
+                      Icons.image_outlined,
+                      color: Theme.of(context).hintColor,
+                      size: 22,
+                    ),
+                    onPressed: controller.pickImage,
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
+                  );
+                }),
                 // Text field
                 Expanded(
                   child: TextField(
@@ -406,9 +438,7 @@ class ChatView extends GetView<ChatController> {
                           color: AppColors.error, size: 28),
                       onPressed: () {
                         Get.find<InferenceService>().stopGeneration();
-                        controller.isLoading.value = false;
-                        controller.isStreaming.value = false;
-                        controller.streamingResponse.value = '';
+                        // State clearing is handled inside sendMessage() after generate() returns
                       },
                       padding: const EdgeInsets.all(8),
                       constraints: const BoxConstraints(),

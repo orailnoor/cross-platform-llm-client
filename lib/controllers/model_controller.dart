@@ -2,13 +2,15 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import 'package:path/path.dart' as p;
-import '../core/constants.dart';
-import '../models/ai_model.dart';
 import '../services/download_service.dart';
 import '../services/inference_service.dart';
+import '../services/local_image_service.dart';
+import '../models/ai_model.dart';
+import '../core/constants.dart';
 
 class ModelController extends GetxController {
   final DownloadService _download = Get.find<DownloadService>();
+  final LocalImageService _localImage = Get.find<LocalImageService>();
   final InferenceService _inference = Get.find<InferenceService>();
 
   Map<String, DownloadProgress> get activeDownloads =>
@@ -16,6 +18,7 @@ class ModelController extends GetxController {
 
   final availableModels = <AiModel>[].obs;
   final downloadedFiles = <String>[].obs;
+  final isImporting = false.obs;
 
   @override
   void onInit() {
@@ -26,7 +29,35 @@ class ModelController extends GetxController {
   }
 
   Future<void> refreshDownloaded() async {
-    downloadedFiles.value = await _download.getDownloadedModels();
+    final files = await _download.getDownloadedModels();
+    downloadedFiles.value = files;
+
+    // Add any downloaded files that are not in availableModels
+    final existingFilenames = availableModels.map((m) => m.filename).toSet();
+    for (final file in files) {
+      if (!existingFilenames.contains(file)) {
+        final lower = file.toLowerCase();
+        final isVision = lower.contains('vl-') || 
+                        lower.contains('llava') || 
+                        lower.contains('vision') || 
+                        lower.contains('-vl');
+                        
+        availableModels.add(AiModel(
+          name: file,
+          filename: file,
+          url: '',
+          size: 'Local File',
+          description: 'Imported from local storage',
+          template: 'chatml',
+          isImported: true,
+          isVision: isVision,
+        ));
+      }
+    }
+    
+    // Remove any imported models that are no longer downloaded
+    availableModels.removeWhere((model) => 
+      model.isImported && !files.contains(model.filename));
   }
 
   bool isDownloaded(String filename) => downloadedFiles.contains(filename);
@@ -67,8 +98,18 @@ class ModelController extends GetxController {
 
   Future<void> loadModel(String filename) async {
     final path = await _download.modelPath(filename);
-    final result = await _inference.loadModel(path, modelName: filename);
-    Get.snackbar('Model', result, snackPosition: SnackPosition.BOTTOM);
+    
+    if (filename.toLowerCase().endsWith('.safetensors')) {
+      final result = await _localImage.loadModel(path, modelName: filename);
+      Get.snackbar('Image Model', result, snackPosition: SnackPosition.BOTTOM);
+    } else {
+      final model = availableModels.firstWhereOrNull((m) => m.filename == filename);
+      final result = await _inference.loadModel(path, modelName: filename);
+      if (_inference.isModelLoaded.value) {
+        _inference.isVisionLoaded.value = model?.isVision ?? false;
+      }
+      Get.snackbar('Text Model', result, snackPosition: SnackPosition.BOTTOM);
+    }
   }
 
   Future<void> unloadModel() async {
@@ -82,6 +123,7 @@ class ModelController extends GetxController {
       );
 
       if (result != null && result.files.single.path != null) {
+        isImporting.value = true;
         final file = File(result.files.single.path!);
         final filename = p.basename(file.path);
 
@@ -98,6 +140,8 @@ class ModelController extends GetxController {
       }
     } catch (e) {
       Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
+    } finally {
+      isImporting.value = false;
     }
   }
 }

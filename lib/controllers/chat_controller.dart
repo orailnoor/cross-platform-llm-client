@@ -10,6 +10,7 @@ import '../models/chat_session.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
 import '../services/cloud_service.dart';
+import '../services/local_image_service.dart';
 
 class ChatController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -161,32 +162,42 @@ class ChatController extends GetxController {
           .toList();
 
       if (inferenceMode == 'local') {
-        final inference = Get.find<InferenceService>();
-
-        // Local models can't process images
-        if (imgBase64 != null) {
-          final warningMsg = ChatMessage(
-            id: _uuid.v4(),
-            chatId: currentSessionId.value,
-            role: 'assistant',
-            content: '⚠️ Local models don\'t support image analysis. Switch to Cloud mode for vision support.',
+        final localImage = Get.find<LocalImageService>();
+        
+        if (localImage.isModelLoaded.value) {
+          // Local image generation
+          final pngBytes = await localImage.generateImage(
+            prompt: text,
+            onProgress: (step, total) {
+              streamingResponse.value = 'Generating locally... ($step/$total)';
+              _scrollToBottom();
+            },
           );
-          messages.add(warningMsg);
-          _hive.saveMessage(warningMsg.id, warningMsg.toMap());
-          _scrollToBottom();
-        }
+          
+          if (pngBytes != null) {
+            rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
+          } else {
+            rawResponse = '❌ Local image generation failed.';
+          }
+        } else {
+          final inference = Get.find<InferenceService>();
 
-        rawResponse = await inference.generate(
-          prompt: text,
-          systemPrompt: _effectiveSystemPrompt,
-          conversationHistory: history,
-          source: 'chat',
-          onToken: (token) {
-            // Real-time streaming update
-            streamingResponse.value += token;
-            _scrollToBottom();
-          },
-        );
+          // Local models support image analysis if it's a vision model (e.g. Qwen2-VL)
+          // We pass the image path directly to the inference service below.
+
+          rawResponse = await inference.generate(
+            prompt: text,
+            systemPrompt: _effectiveSystemPrompt,
+            conversationHistory: history,
+            source: 'chat',
+            imagePath: selectedImagePath.value,
+            onToken: (token) {
+              // Real-time streaming update
+              streamingResponse.value += token;
+              _scrollToBottom();
+            },
+          );
+        }
       } else {
         final cloud = Get.find<CloudService>();
         final apiMessages = [
@@ -200,6 +211,7 @@ class ChatController extends GetxController {
       }
 
       // Stop streaming UI
+      final tps = inferenceMode == 'local' ? Get.find<InferenceService>().tokensPerSecond.value : null;
       isStreaming.value = false;
       streamingResponse.value = '';
 
@@ -216,6 +228,7 @@ class ChatController extends GetxController {
         role: 'assistant',
         content: rawResponse,
         imageBase64: outImageBase64,
+        tokensPerSec: tps,
       );
       messages.add(aiMsg);
       _hive.saveMessage(aiMsg.id, aiMsg.toMap());

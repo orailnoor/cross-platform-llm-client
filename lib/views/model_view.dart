@@ -53,8 +53,8 @@ class ModelView extends GetView<ModelController> {
                 _buildActiveModelBanner(context),
                 const SizedBox(height: 12),
 
-                // Model loading progress
-                _buildModelLoadingProgress(context),
+                // Model importing progress
+                _buildImportingProgress(context),
 
                 // Download progress (list all active downloads)
                 ...controller.activeDownloads.values
@@ -180,17 +180,20 @@ class ModelView extends GetView<ModelController> {
     });
   }
 
-  Widget _buildModelLoadingProgress(BuildContext context) {
+  Widget _buildModelLoadingProgress(BuildContext context, AiModel model) {
     return Obx(() {
       final inference = Get.find<InferenceService>();
-      if (!inference.isLoadingModel.value) return const SizedBox.shrink();
+      if (!inference.isLoadingModel.value ||
+          inference.loadingModelName.value != model.filename) {
+        return const SizedBox.shrink();
+      }
 
       return Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.only(top: 12),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: AppColors.secondary.withOpacity(0.3)),
         ),
         child: Column(
@@ -199,8 +202,8 @@ class ModelView extends GetView<ModelController> {
             Row(
               children: [
                 const SizedBox(
-                  width: 16,
-                  height: 16,
+                  width: 14,
+                  height: 14,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     color: AppColors.secondary,
@@ -208,9 +211,9 @@ class ModelView extends GetView<ModelController> {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Loading model into memory...',
+                  'Loading into memory...',
                   style: GoogleFonts.inter(
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w500,
                     color: AppColors.secondary,
                   ),
@@ -219,7 +222,7 @@ class ModelView extends GetView<ModelController> {
                 Text(
                   '${(inference.modelLoadProgress.value * 100).toStringAsFixed(0)}%',
                   style: GoogleFonts.firaCode(
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: AppColors.secondary,
                   ),
@@ -235,7 +238,44 @@ class ModelView extends GetView<ModelController> {
                     : null,
                 backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                 color: AppColors.secondary,
-                minHeight: 4,
+                minHeight: 3,
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _buildImportingProgress(BuildContext context) {
+    return Obx(() {
+      if (!controller.isImporting.value) return const SizedBox.shrink();
+
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.secondary.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.secondary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              'Importing model from storage...',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: AppColors.secondary,
               ),
             ),
           ],
@@ -362,6 +402,25 @@ class ModelView extends GetView<ModelController> {
                                 ),
                               ),
                             ],
+                            if (model.isImported) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.secondary.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '⬇ IMPORTED',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.secondary,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 4),
@@ -432,6 +491,7 @@ class ModelView extends GetView<ModelController> {
                   ],
                 ],
               ),
+              _buildModelLoadingProgress(context, model),
             ],
           ),
         ),

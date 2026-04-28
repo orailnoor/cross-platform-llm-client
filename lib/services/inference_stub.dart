@@ -36,6 +36,7 @@ class InferenceEngine {
     required String modelName,
     required int maxTokens,
     required double temperature,
+    String? imagePath,
     void Function(String token)? onToken,
   }) async {
     return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';
