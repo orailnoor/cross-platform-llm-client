@@ -255,7 +255,7 @@ class InferenceEngine {
       }
     }
 
-    messages.add(ChatMessage(role: 'user', content: prompt));
+    messages.add(ChatMessage(role: 'user', content: prompt, imagePath: imagePath));
     return messages;
   }
 

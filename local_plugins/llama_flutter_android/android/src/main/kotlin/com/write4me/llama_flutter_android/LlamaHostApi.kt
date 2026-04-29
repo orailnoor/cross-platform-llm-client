@@ -62,11 +62,11 @@ data class ModelConfig (
   /** KV-cache context size in tokens. Larger values use more RAM. */
   val contextSize: Long,
   /**
-   * Number of model layers to offload to GPU via Vulkan.
-   * Use [LlamaController.detectGpu] to get a device-appropriate value.
    * Null or 0 = CPU only. 99 = full offload (clamped to model's layer count).
    */
-  val nGpuLayers: Long? = null
+  val nGpuLayers: Long? = null,
+  /** Absolute path to the vision projector file (`mmproj`) for VL models. */
+  val mmprojPath: String? = null
 )
  {
   companion object {
@@ -75,7 +75,8 @@ data class ModelConfig (
       val nThreads = pigeonVar_list[1] as Long
       val contextSize = pigeonVar_list[2] as Long
       val nGpuLayers = pigeonVar_list[3] as Long?
-      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers)
+      val mmprojPath = pigeonVar_list[4] as String?
+      return ModelConfig(modelPath, nThreads, contextSize, nGpuLayers, mmprojPath)
     }
   }
   fun toList(): List<Any?> {
@@ -84,6 +85,7 @@ data class ModelConfig (
       nThreads,
       contextSize,
       nGpuLayers,
+      mmprojPath
     )
   }
 }
@@ -97,20 +99,24 @@ data class ChatMessage (
   /** Role of the message sender: `'system'`, `'user'`, or `'assistant'`. */
   val role: String,
   /** Text content of the message. */
-  val content: String
+  val content: String,
+  /** Absolute path to an image file for vision-language models. */
+  val imagePath: String? = null
 )
  {
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): ChatMessage {
       val role = pigeonVar_list[0] as String
       val content = pigeonVar_list[1] as String
-      return ChatMessage(role, content)
+      val imagePath = pigeonVar_list[2] as String?
+      return ChatMessage(role, content, imagePath)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       role,
       content,
+      imagePath
     )
   }
 }
