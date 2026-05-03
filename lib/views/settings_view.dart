@@ -42,6 +42,7 @@ class SettingsView extends GetView<SettingsController> {
               // ── Cloud API Config ────────────────
               // ── Model Parameters (RAM-aware) ─────
               _buildSectionHeader(context, 'MODEL PARAMETERS'),
+              _buildLiteRtPerformanceCard(context),
               _buildSmartSlider(
                 context: context,
                 label: 'Temperature',
@@ -241,6 +242,58 @@ class SettingsView extends GetView<SettingsController> {
               ),
               onSubmitted: (value) => controller.setGlobalSystemPrompt(value),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLiteRtPerformanceCard(BuildContext context) {
+    final modes = [
+      (
+        value: 'auto_fast',
+        title: 'Auto Fast',
+        subtitle: 'Try GPU like Edge Gallery, then use CPU if GPU is unsafe.',
+        icon: Icons.auto_awesome,
+      ),
+      (
+        value: 'gpu_fast',
+        title: 'GPU Fast',
+        subtitle: 'Maximum LiteRT speed attempt. Can crash on some devices.',
+        icon: Icons.bolt,
+      ),
+      (
+        value: 'cpu_safe',
+        title: 'CPU Safe',
+        subtitle: 'Stable LiteRT mode with lower token speed.',
+        icon: Icons.shield_outlined,
+      ),
+    ];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Column(
+          children: [
+            for (final mode in modes)
+              ListTile(
+                onTap: () => controller.setLiteRtPerformanceMode(mode.value),
+                leading: Icon(mode.icon, color: AppColors.primary),
+                title: Text(
+                  mode.title,
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  mode.subtitle,
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor),
+                ),
+                trailing: controller.liteRtPerformanceMode.value == mode.value
+                    ? const Icon(Icons.check, color: AppColors.primary)
+                    : null,
+                dense: true,
+              ),
           ],
         ),
       ),

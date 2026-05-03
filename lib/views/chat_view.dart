@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
@@ -8,6 +7,7 @@ import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../services/inference_service.dart';
 import '../utils/thought_parser.dart';
+import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/thought_disclosure.dart';
 
@@ -166,79 +166,6 @@ class ChatView extends GetView<ChatController> {
             }),
           ),
 
-          // Image preview
-          Obx(() {
-            if (controller.selectedImagePath.value == null &&
-                controller.selectedFileName.value == null) {
-              return const SizedBox.shrink();
-            }
-            return Container(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Column(
-                children: [
-                  if (controller.selectedImagePath.value != null)
-                    Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: controller.selectedImageBase64.value != null
-                              ? Image.memory(
-                                  base64Decode(
-                                      controller.selectedImageBase64.value!),
-                                  width: 52,
-                                  height: 52,
-                                  fit: BoxFit.cover,
-                                )
-                              : Container(
-                                  width: 52,
-                                  height: 52,
-                                  color: Colors.grey[300],
-                                  child: const Icon(Icons.image, size: 26),
-                                ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('Image attached',
-                            style: GoogleFonts.inter(
-                                color: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.color ??
-                                    Colors.grey,
-                                fontSize: 13)),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: controller.clearImage,
-                        ),
-                      ],
-                    ),
-                  if (controller.selectedFileName.value != null)
-                    Row(
-                      children: [
-                        const Icon(Icons.description_outlined,
-                            size: 22, color: AppColors.secondary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            controller.selectedFileName.value!,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: controller.clearFile,
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            );
-          }),
-
           // Input bar
           _buildInputBar(context),
         ],
@@ -376,9 +303,14 @@ class ChatView extends GetView<ChatController> {
 
   String _cleanStreamingText(String text) {
     return text
-        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(
+            RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]'),
+            '')
         .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
-        .replaceAll('\uFFFD', '');
+        .replaceAll('\uFFFD', '')
+        .replaceAll('<|endoftext|>', '')
+        .replaceAll('<|im_end|>', '')
+        .replaceAll('<|end|>', '');
   }
 
   bool _hasPrintableStreamingText(String text) {
@@ -615,6 +547,26 @@ class ChatView extends GetView<ChatController> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Obx(() {
+              final name = controller.selectedFileName.value;
+              if (name == null) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                child: AttachmentPreview(
+                  fileName: name,
+                  fileType: controller.selectedFileType.value,
+                  fileSize: controller.selectedFileSize.value > 0
+                      ? controller.selectedFileSize.value
+                      : null,
+                  imagePath: controller.selectedImagePath.value,
+                  imageBase64: controller.selectedImageBase64.value,
+                  onRemove: () {
+                    controller.clearImage();
+                    controller.clearFile();
+                  },
+                ),
+              );
+            }),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -682,27 +634,28 @@ class ChatView extends GetView<ChatController> {
                     return IconButton(
                       icon: const Icon(Icons.stop_circle,
                           color: AppColors.error, size: 28),
-                      onPressed: () {
-                        Get.find<InferenceService>().stopGeneration();
-                        // State clearing is handled inside sendMessage() after generate() returns
-                      },
+                      onPressed: controller.stopGenerating,
                       padding: const EdgeInsets.all(8),
                       constraints: const BoxConstraints(),
                     );
                   }
                   final hasText = controller.inputText.value.isNotEmpty;
+                  final hasAttachment =
+                      controller.selectedFileName.value != null ||
+                          controller.selectedImagePath.value != null;
+                  final canSend = hasText || hasAttachment;
                   return IconButton(
                     icon: Icon(
                       Icons.arrow_upward_rounded,
-                      color: hasText
+                      color: canSend
                           ? AppColors.primary
                           : Theme.of(context).hintColor,
                       size: 24,
                     ),
-                    onPressed: hasText ? controller.sendMessage : null,
+                    onPressed: canSend ? controller.sendMessage : null,
                     padding: const EdgeInsets.all(8),
                     constraints: const BoxConstraints(),
-                    style: hasText
+                    style: canSend
                         ? IconButton.styleFrom(
                             backgroundColor:
                                 AppColors.primary.withValues(alpha: 0.15),

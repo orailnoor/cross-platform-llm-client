@@ -1,0 +1,32 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.songhieu.flutter_litert_lm">
+    <!--
+        These <uses-native-library> entries are merged into the host app's
+        manifest by AGP's manifest merger, so apps that depend on
+        flutter_litert_lm get OpenCL access automatically — no extra steps
+        required by the user.
+
+        libOpenCL.so is NOT part of the public Android NDK; it lives in
+        /vendor/lib64/ and from Android 12 (API 31) onwards apps must
+        explicitly opt-in via <uses-native-library> or the dynamic linker
+        will refuse dlopen(). LiteRT-LM's GPU backend uses OpenCL for matrix
+        ops, so without these declarations the GPU path fails on real
+        devices with "Cannot find OpenCL library on this device".
+
+        Each entry is required="false" so devices without that vendor lib
+        (e.g. Android emulator, devices with no GPU acceleration) can still
+        install the app — the plugin will fall back to the CPU backend in
+        that case.
+    -->
+    <application>
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL-car.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL-pixel.so"
+            android:required="false" />
+    </application>
+</manifest>

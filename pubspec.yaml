@@ -53,7 +53,8 @@ dependencies:
   file_picker: ^11.0.2
   flutter_inappwebview: ^6.1.5
   image: ^4.8.0
-  flutter_litert_lm: ^0.3.0
+  flutter_litert_lm:
+    path: local_plugins/flutter_litert_lm
 
 dev_dependencies:
   flutter_test:

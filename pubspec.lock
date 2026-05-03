@@ -345,10 +345,9 @@ packages:
   flutter_litert_lm:
     dependency: "direct main"
     description:
-      name: flutter_litert_lm
-      sha256: "222fa9e669c6864c901049930b5639c7276a18b508a38f1fa8697427bde2abb0"
-      url: "https://pub.dev"
-    source: hosted
+      path: "local_plugins/flutter_litert_lm"
+      relative: true
+    source: path
     version: "0.3.0"
   flutter_local_notifications:
     dependency: "direct main"

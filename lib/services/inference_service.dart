@@ -34,12 +34,23 @@ class InferenceService extends GetxService {
   final gpuLayersUsed = 0.obs;
   final isGpuAccelerated = false.obs;
   final loadedModelRuntime = ''.obs;
+  final loadedBackend = ''.obs;
 
   /// Whether the current platform supports local inference.
   bool get supportsLocalInference => platform.supportsLocalInference;
 
   // Platform-specific engine
   platform.InferenceEngine? _engine;
+  String _sessionNativeRuntime = '';
+
+  String get sessionNativeRuntime => _sessionNativeRuntime;
+
+  bool requiresAppRestartForRuntime(String runtime) {
+    final normalized = runtime.toLowerCase();
+    if (normalized != 'llama' && normalized != 'litert') return false;
+    return _sessionNativeRuntime.isNotEmpty &&
+        _sessionNativeRuntime != normalized;
+  }
 
   Future<String> loadModel(
     String modelPath, {
@@ -56,6 +67,35 @@ class InferenceService extends GetxService {
     }
 
     try {
+      final runtime = _runtimeFor(modelPath, modelRuntime);
+      final isLiteRt = runtime == 'litert';
+      final liteRtMode = _hive.getSetting<String>(
+            AppConstants.keyLiteRtPerformanceMode,
+            defaultValue: AppConstants.defaultLiteRtPerformanceMode,
+          ) ??
+          AppConstants.defaultLiteRtPerformanceMode;
+      final hadPendingGpuLoad = isLiteRt &&
+          (_hive.getSetting<bool>(
+                AppConstants.keyLiteRtGpuLoadPending,
+                defaultValue: false,
+              ) ??
+              false);
+      if (hadPendingGpuLoad) {
+        await _hive.setSetting(AppConstants.keyLiteRtGpuLoadPending, false);
+        await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, true);
+      }
+      final gpuCrashDetected = isLiteRt &&
+          (_hive.getSetting<bool>(
+                AppConstants.keyLiteRtGpuCrashDetected,
+                defaultValue: false,
+              ) ??
+              false);
+      final forceLiteRtCpu = isLiteRt &&
+          (liteRtMode == 'cpu_safe' ||
+              (liteRtMode == 'auto_fast' && gpuCrashDetected));
+      final shouldTryLiteRtGpu =
+          isLiteRt && !forceLiteRtCpu && liteRtMode != 'cpu_safe';
+
       await unloadModel();
       isLoadingModel.value = true;
       loadingModelName.value = modelName ?? modelPath.split('/').last;
@@ -78,6 +118,10 @@ class InferenceService extends GetxService {
         modelRuntime: modelRuntime,
         contextSize: contextSize,
         deviceTier: deviceTier,
+        liteRtPerformanceMode: liteRtMode,
+        forceLiteRtCpu: forceLiteRtCpu,
+        clearLiteRtCache: hadPendingGpuLoad || (isLiteRt && gpuCrashDetected),
+        markLiteRtGpuPending: shouldTryLiteRtGpu,
       );
 
       if (!result.success &&
@@ -95,6 +139,8 @@ class InferenceService extends GetxService {
           runtime: modelRuntime ??
               _hive.getSetting<String>(AppConstants.keyLocalModelRuntime) ??
               '',
+          backend:
+              _hive.getSetting<String>(AppConstants.keyLocalModelBackend) ?? '',
         );
       }
 
@@ -105,6 +151,7 @@ class InferenceService extends GetxService {
         modelLoadProgress.value = 0.0;
         loadedModelName.value = '';
         loadedModelRuntime.value = '';
+        loadedBackend.value = '';
         gpuName.value = '';
         gpuLayersUsed.value = 0;
         isGpuAccelerated.value = false;
@@ -117,9 +164,16 @@ class InferenceService extends GetxService {
       modelLoadProgress.value = 1.0;
       loadedModelName.value = activeModelName;
       loadedModelRuntime.value = result.runtime;
+      if (result.runtime == 'llama' || result.runtime == 'litert') {
+        _sessionNativeRuntime = result.runtime;
+      }
+      loadedBackend.value = result.backend;
       gpuName.value = result.gpuName;
       gpuLayersUsed.value = result.gpuLayers;
-      isGpuAccelerated.value = result.gpuLayers > 0;
+      isGpuAccelerated.value = result.backend == 'gpu' || result.gpuLayers > 0;
+      if (isLiteRt && result.backend == 'gpu') {
+        await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
+      }
       contextTokensUsed.value = 0;
       contextTokensTotal.value = contextSize;
 
@@ -128,6 +182,8 @@ class InferenceService extends GetxService {
           AppConstants.keyLocalModelName, loadedModelName.value);
       await _hive.setSetting(
           AppConstants.keyLocalModelRuntime, loadedModelRuntime.value);
+      await _hive.setSetting(
+          AppConstants.keyLocalModelBackend, loadedBackend.value);
 
       return result.message;
     } catch (e) {
@@ -135,6 +191,7 @@ class InferenceService extends GetxService {
       isLoadingModel.value = false;
       loadingModelName.value = '';
       modelLoadProgress.value = 0.0;
+      loadedBackend.value = '';
       Get.find<AppLogService>().error('Failed to load local model', details: e);
       return 'ERROR: Failed to load model — $e';
     }
@@ -152,6 +209,7 @@ class InferenceService extends GetxService {
     loadedModelName.value = '';
     loadingModelName.value = '';
     loadedModelRuntime.value = '';
+    loadedBackend.value = '';
     gpuLayersUsed.value = 0;
     isGpuAccelerated.value = false;
     gpuName.value = '';
@@ -165,6 +223,7 @@ class InferenceService extends GetxService {
     List<Map<String, String>>? conversationHistory,
     String source = 'chat',
     String? imagePath,
+    String? audioPath,
     void Function(String token)? onToken,
   }) async {
     if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
@@ -190,6 +249,16 @@ class InferenceService extends GetxService {
     streamingText.value = '';
 
     final startTime = DateTime.now();
+    DateTime? firstVisibleTokenAt;
+    Timer? tokenFlushTimer;
+    final tokenFlushBuffer = StringBuffer();
+
+    void flushTokenBuffer() {
+      if (tokenFlushBuffer.isEmpty) return;
+      final text = tokenFlushBuffer.toString();
+      tokenFlushBuffer.clear();
+      onToken?.call(text);
+    }
 
     try {
       final temperature = _hive.getSetting<double>(
@@ -212,17 +281,30 @@ class InferenceService extends GetxService {
         maxTokens: maxTokens,
         temperature: temperature,
         imagePath: imagePath,
+        audioPath: audioPath,
         onToken: (token) {
+          firstVisibleTokenAt ??= DateTime.now();
           tokenCount.value++;
           streamingText.value += token;
+          final speedStart = firstVisibleTokenAt ?? startTime;
           final elapsedSeconds =
-              DateTime.now().difference(startTime).inMilliseconds / 1000.0;
+              DateTime.now().difference(speedStart).inMilliseconds / 1000.0;
           if (elapsedSeconds > 0) {
             tokensPerSecond.value = tokenCount.value / elapsedSeconds;
           }
-          onToken?.call(token);
+          if (loadedModelRuntime.value == 'litert') {
+            tokenFlushBuffer.write(token);
+            tokenFlushTimer ??= Timer(const Duration(milliseconds: 60), () {
+              tokenFlushTimer = null;
+              flushTokenBuffer();
+            });
+          } else {
+            onToken?.call(token);
+          }
         },
       );
+      tokenFlushTimer?.cancel();
+      flushTokenBuffer();
 
       await refreshContextInfo();
       isGenerating.value = false;
@@ -232,18 +314,24 @@ class InferenceService extends GetxService {
       isGenerating.value = false;
       generationSource.value = '';
       streamingText.value = '';
+      tokenFlushTimer?.cancel();
+      flushTokenBuffer();
       Get.find<AppLogService>().error('Local generation failed', details: e);
       return 'ERROR: $e';
     }
   }
 
   Future<void> stopGeneration() async {
-    await _engine?.stop();
     isGenerating.value = false;
     tokenCount.value = 0;
     generationSource.value = '';
     streamingText.value = '';
-    await refreshContextInfo();
+    final engine = _engine;
+    if (engine != null) {
+      unawaited(engine.stop().timeout(const Duration(seconds: 1)).catchError(
+            (_) {},
+          ));
+    }
   }
 
   Future<void> refreshContextInfo() async {
@@ -272,20 +360,61 @@ class InferenceService extends GetxService {
     required String? modelRuntime,
     required int contextSize,
     required String deviceTier,
+    required String liteRtPerformanceMode,
+    required bool forceLiteRtCpu,
+    required bool clearLiteRtCache,
+    required bool markLiteRtGpuPending,
   }) async {
+    var gpuLoadFailed = false;
     try {
+      if (markLiteRtGpuPending) {
+        await _hive.setSetting(AppConstants.keyLiteRtGpuLoadPending, true);
+      }
       return await _engine!.loadModel(
         modelPath: modelPath,
         modelRuntime: modelRuntime,
         contextSize: contextSize,
         deviceTier: deviceTier,
+        liteRtPerformanceMode: liteRtPerformanceMode,
+        forceLiteRtCpu: forceLiteRtCpu,
+        clearLiteRtCache: clearLiteRtCache,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     } catch (e) {
+      if (markLiteRtGpuPending && liteRtPerformanceMode == 'auto_fast') {
+        await _hive.setSetting(AppConstants.keyLiteRtGpuLoadPending, false);
+        await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, true);
+        try {
+          modelLoadProgress.value = 0.0;
+          return await _engine!.loadModel(
+            modelPath: modelPath,
+            modelRuntime: modelRuntime,
+            contextSize: contextSize,
+            deviceTier: deviceTier,
+            liteRtPerformanceMode: liteRtPerformanceMode,
+            forceLiteRtCpu: true,
+            clearLiteRtCache: true,
+            onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
+          );
+        } catch (cpuError) {
+          return platform.LoadResult(
+            success: false,
+            message: 'ERROR: Failed to load model - $cpuError',
+          );
+        }
+      }
+      gpuLoadFailed = true;
       return platform.LoadResult(
         success: false,
-        message: 'ERROR: Failed to load model — $e',
+        message: 'ERROR: Failed to load model - $e',
       );
+    } finally {
+      if (markLiteRtGpuPending) {
+        if (gpuLoadFailed) {
+          await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, true);
+        }
+        await _hive.setSetting(AppConstants.keyLiteRtGpuLoadPending, false);
+      }
     }
   }
 
@@ -293,5 +422,11 @@ class InferenceService extends GetxService {
     if (progress.isNaN || progress.isInfinite) return 0.0;
     final normalized = progress > 1 ? progress / 100 : progress;
     return normalized.clamp(0.0, 1.0).toDouble();
+  }
+
+  String _runtimeFor(String modelPath, String? modelRuntime) {
+    final runtime = modelRuntime?.toLowerCase();
+    if (runtime == 'litert' || runtime == 'llama') return runtime!;
+    return modelPath.toLowerCase().endsWith('.litertlm') ? 'litert' : 'llama';
   }
 }

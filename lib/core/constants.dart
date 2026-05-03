@@ -33,6 +33,12 @@ class AppConstants {
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
   static const String keyLocalModelRuntime = 'local_model_runtime';
+  static const String keyLocalModelBackend = 'local_model_backend';
+  static const String keyLiteRtPerformanceMode = 'litert_performance_mode';
+  static const String keyLiteRtGpuWarningAccepted =
+      'litert_gpu_warning_accepted';
+  static const String keyLiteRtGpuLoadPending = 'litert_gpu_load_pending';
+  static const String keyLiteRtGpuCrashDetected = 'litert_gpu_crash_detected';
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
@@ -41,6 +47,7 @@ class AppConstants {
   static const double defaultTemperature = 0.7;
   static const int defaultMaxTokens = 1024;
   static const int defaultContextSize = 2048;
+  static const String defaultLiteRtPerformanceMode = 'auto_fast';
 
   // System Prompt (compact for small context models)
   static const String systemPrompt =
