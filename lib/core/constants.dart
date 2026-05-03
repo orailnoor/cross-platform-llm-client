@@ -9,19 +9,30 @@ class AppConstants {
 
   // Settings Keys
   static const String keyInferenceMode = 'inference_mode'; // 'local' or 'cloud'
-  static const String keyCloudProvider = 'cloud_provider'; // 'openai', 'anthropic', 'google', 'kimi'
+  static const String keyCloudProvider =
+      'cloud_provider'; // 'openai', 'anthropic', 'google', 'kimi'
   static const String keyOpenaiKey = 'openai_api_key';
   static const String keyAnthropicKey = 'anthropic_api_key';
   static const String keyGoogleKey = 'google_api_key';
   static const String keyKimiKey = 'kimi_api_key';
   static const String keyStabilityKey = 'stability_api_key';
+  static const String keyNvidiaKey = 'nvidia_api_key';
+  static const String keyOpenRouterKey = 'openrouter_api_key';
+  static const String keyCustomCloudName = 'custom_cloud_name';
+  static const String keyCustomCloudBaseUrl = 'custom_cloud_base_url';
+  static const String keyCustomCloudKey = 'custom_cloud_api_key';
   static const String keyOpenaiModel = 'openai_model';
   static const String keyAnthropicModel = 'anthropic_model';
   static const String keyGoogleModel = 'google_model';
   static const String keyKimiModel = 'kimi_model';
   static const String keyStabilityModel = 'stability_model';
+  static const String keyNvidiaModel = 'nvidia_model';
+  static const String keyOpenRouterModel = 'openrouter_model';
+  static const String keyCustomCloudModel = 'custom_cloud_model';
+  static const String keyGlobalSystemPrompt = 'global_system_prompt';
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
+  static const String keyLocalModelRuntime = 'local_model_runtime';
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
@@ -41,6 +52,58 @@ class AppConstants {
 
   // Available Models for Download
   static const List<Map<String, String>> availableModels = [
+    {
+      'name': 'Qwen 3 0.6B (LiteRT-LM)',
+      'filename': 'Qwen3-0.6B.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm',
+      'size': '586 MB',
+      'description':
+          'Smallest LiteRT-LM general-purpose chat model for low-RAM phones',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Qwen 2.5 1.5B Instruct (LiteRT-LM)',
+      'filename': 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
+      'size': '1.49 GB',
+      'description': 'Balanced LiteRT-LM chat model with int8 quantization',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'DeepSeek R1 Distill Qwen 1.5B (LiteRT-LM)',
+      'filename':
+          'DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv4096.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/DeepSeek-R1-Distill-Qwen-1.5B/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv4096.litertlm',
+      'size': '1.71 GB',
+      'description': 'Reasoning-focused LiteRT-LM model with int8 quantization',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Gemma 4 E2B Instruct (LiteRT-LM)',
+      'filename': 'gemma-4-E2B-it.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm',
+      'size': '2.46 GB',
+      'description': 'Strong general chat LiteRT-LM model from Google Gemma',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Gemma 4 E4B Instruct (LiteRT-LM)',
+      'filename': 'gemma-4-E4B-it.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm',
+      'size': '3.40 GB',
+      'description': 'Highest quality LiteRT-LM option; needs about 5 GB RAM',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
     {
       'name': 'Kimi Moonlight 16B-A3B (Q3_K_S)',
       'filename': 'moonlight-16b-a3b-instruct-q3_k_s.gguf',
@@ -162,9 +225,16 @@ class AppConstants {
   ];
 
   // Cloud API Endpoints
-  static const String openaiEndpoint = 'https://api.openai.com/v1/chat/completions';
-  static const String anthropicEndpoint = 'https://api.anthropic.com/v1/messages';
-  static const String googleEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models';
-  static const String kimiEndpoint = 'https://api.moonshot.ai/v1/chat/completions';
-  static const String stabilityEndpoint = 'https://api.stability.ai/v2beta/stable-image/generate/sd3';
+  static const String openaiEndpoint =
+      'https://api.openai.com/v1/chat/completions';
+  static const String anthropicEndpoint =
+      'https://api.anthropic.com/v1/messages';
+  static const String googleEndpoint =
+      'https://generativelanguage.googleapis.com/v1beta/models';
+  static const String kimiEndpoint =
+      'https://api.moonshot.ai/v1/chat/completions';
+  static const String stabilityEndpoint =
+      'https://api.stability.ai/v2beta/stable-image/generate/sd3';
+  static const String nvidiaEndpoint = 'https://integrate.api.nvidia.com/v1';
+  static const String openRouterEndpoint = 'https://openrouter.ai/api/v1';
 }

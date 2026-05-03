@@ -5,9 +5,12 @@ class ChatMessage {
   final String content;
   final String? imageBase64; // For multimodal
   final String? imagePath;
+  final String? fileName;
+  final String? fileContent;
   final String? cmdOutput; // Result of CMD: execution
   final bool isCommand;
   final double? tokensPerSec;
+  final int? thoughtDurationSeconds;
   final DateTime timestamp;
 
   ChatMessage({
@@ -17,9 +20,12 @@ class ChatMessage {
     required this.content,
     this.imageBase64,
     this.imagePath,
+    this.fileName,
+    this.fileContent,
     this.cmdOutput,
     this.isCommand = false,
     this.tokensPerSec,
+    this.thoughtDurationSeconds,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
@@ -30,9 +36,12 @@ class ChatMessage {
         'content': content,
         'imageBase64': imageBase64,
         'imagePath': imagePath,
+        'fileName': fileName,
+        'fileContent': fileContent,
         'cmdOutput': cmdOutput,
         'isCommand': isCommand,
         'tokensPerSec': tokensPerSec,
+        'thoughtDurationSeconds': thoughtDurationSeconds,
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -43,9 +52,16 @@ class ChatMessage {
         content: map['content'] ?? '',
         imageBase64: map['imageBase64'],
         imagePath: map['imagePath'],
+        fileName: map['fileName'],
+        fileContent: map['fileContent'],
         cmdOutput: map['cmdOutput'],
         isCommand: map['isCommand'] ?? false,
-        tokensPerSec: map['tokensPerSec'] != null ? (map['tokensPerSec'] as num).toDouble() : null,
+        tokensPerSec: map['tokensPerSec'] != null
+            ? (map['tokensPerSec'] as num).toDouble()
+            : null,
+        thoughtDurationSeconds: map['thoughtDurationSeconds'] != null
+            ? (map['thoughtDurationSeconds'] as num).toInt()
+            : null,
         timestamp: DateTime.tryParse(map['timestamp'] ?? '') ?? DateTime.now(),
       );
 }

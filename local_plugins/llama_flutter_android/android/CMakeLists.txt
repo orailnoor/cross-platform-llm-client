@@ -20,6 +20,7 @@ endif()
 set(GGML_CPU_AARCH64 ON CACHE BOOL "Enable ARM64 support")
 set(GGML_DOTPROD ON CACHE BOOL "Enable ARM NEON dot product")
 set(GGML_VULKAN OFF CACHE BOOL "Enable Vulkan GPU backend")
+set(GGML_OPENMP OFF CACHE BOOL "Disable OpenMP to avoid packaging libomp.so" FORCE)
 set(GGML_STATIC OFF CACHE BOOL "Build as shared library")
 set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries")
 
@@ -31,6 +32,17 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "Disable server")
 # Add llama.cpp
 add_subdirectory(src/main/cpp/llama.cpp)
 
+# ggml-base is linked as a standalone shared object and contains C++ sources.
+# On Android/NDK it must explicitly link libc++ or symbols such as operator new
+# and std::runtime_error stay unresolved during the native build.
+if(ANDROID)
+    foreach(target ggml-base ggml ggml-cpu llama)
+        if(TARGET ${target})
+            target_link_libraries(${target} PRIVATE c++_shared)
+        endif()
+    endforeach()
+endif()
+
 # JNI wrapper library - simplified without common library
 add_library(llama_jni SHARED
     src/main/cpp/jni_wrapper.cpp
@@ -40,6 +52,7 @@ find_library(VULKAN_LIB vulkan)
 
 target_link_libraries(llama_jni
     llama
+    c++_shared
     android
     log
     ${VULKAN_LIB}

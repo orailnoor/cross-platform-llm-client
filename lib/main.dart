@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'controllers/settings_controller.dart';
+import 'controllers/cloud_model_controller.dart';
 import 'core/theme.dart';
 import 'core/routes.dart';
 import 'services/hive_service.dart';
@@ -12,6 +13,7 @@ import 'services/cloud_service.dart';
 import 'services/download_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
+import 'services/app_log_service.dart';
 import 'core/constants.dart';
 
 void main() async {
@@ -33,17 +35,19 @@ void main() async {
 
   // Settings controller must be initialized before runApp for theme support
   final settingsController = Get.put(SettingsController());
+  Get.put(CloudModelController());
 
   Get.put(InferenceService());
   Get.put(CloudService());
   Get.put(DownloadService());
   Get.put(LocalImageService());
+  Get.put(AppLogService());
 
   // Auto-configure inference settings based on device RAM
   _autoConfigureForDevice();
 
-  // Try to reload last used local model (only on platforms that support it)
-  _tryReloadModel();
+  // Keep last model as a quick-load option, but do not auto-load on startup.
+  _validateLastModel();
 
   runApp(const AIChatApp());
 
@@ -53,22 +57,17 @@ void main() async {
   });
 }
 
-/// If a model was previously loaded, try to reload it on startup.
-void _tryReloadModel() async {
+/// If a remembered model is missing, clear it so the quick-load option is honest.
+void _validateLastModel() async {
   final inference = Get.find<InferenceService>();
   if (!inference.supportsLocalInference) return;
 
   final hive = Get.find<HiveService>();
   final modelName = hive.getSetting<String>(AppConstants.keyLocalModelName);
-  
+
   if (modelName != null && modelName.isNotEmpty) {
-    // Reconstruct dynamic path to prevent iOS App Container UUID changes breaking the load
     final downloadService = Get.find<DownloadService>();
-    final dynamicPath = await downloadService.modelPath(modelName);
-    
-    if (await downloadService.isModelDownloaded(modelName)) {
-      await inference.loadModel(dynamicPath, modelName: modelName);
-    } else {
+    if (!await downloadService.isModelDownloaded(modelName)) {
       // Model file is missing, clear the active model settings
       await hive.setSetting(AppConstants.keyLocalModelPath, '');
       await hive.setSetting(AppConstants.keyLocalModelName, '');

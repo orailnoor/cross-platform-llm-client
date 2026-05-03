@@ -1,15 +1,15 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/chat_controller.dart';
-import '../controllers/home_controller.dart';
-import '../controllers/model_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../services/inference_service.dart';
+import '../utils/thought_parser.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/thought_disclosure.dart';
 
 class ChatView extends GetView<ChatController> {
   const ChatView({super.key});
@@ -48,8 +48,16 @@ class ChatView extends GetView<ChatController> {
                         ? settings.googleModel.value
                         : provider == 'stability'
                             ? settings.stabilityModel.value
-                            : settings.kimiModel.value;
-            modelLabel = model;
+                            : provider == 'nvidia'
+                                ? settings.nvidiaModel.value
+                                : provider == 'openrouter'
+                                    ? settings.openRouterModel.value
+                                    : provider == 'custom'
+                                        ? settings.customCloudModel.value
+                                        : settings.kimiModel.value;
+            modelLabel = provider == 'custom' && model.isNotEmpty
+                ? '${settings.customCloudName.value}: $model'
+                : model;
           }
 
           return Padding(
@@ -129,6 +137,7 @@ class ChatView extends GetView<ChatController> {
         children: [
           // ── Model Loading Bar ──────────────────
           _buildModelLoadingBar(context),
+          _buildContextUsageBar(context),
 
           // Messages + streaming
           Expanded(
@@ -159,41 +168,72 @@ class ChatView extends GetView<ChatController> {
 
           // Image preview
           Obx(() {
-            if (controller.selectedImagePath.value == null) {
+            if (controller.selectedImagePath.value == null &&
+                controller.selectedFileName.value == null) {
               return const SizedBox.shrink();
             }
             return Container(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Row(
+              child: Column(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: controller.selectedImageBase64.value != null
-                        ? Image.memory(
-                            base64Decode(controller.selectedImageBase64.value!),
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                          )
-                        : Container(
-                            width: 60,
-                            height: 60,
-                            color: Colors.grey[300],
-                            child: const Icon(Icons.image, size: 30),
+                  if (controller.selectedImagePath.value != null)
+                    Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: controller.selectedImageBase64.value != null
+                              ? Image.memory(
+                                  base64Decode(
+                                      controller.selectedImageBase64.value!),
+                                  width: 52,
+                                  height: 52,
+                                  fit: BoxFit.cover,
+                                )
+                              : Container(
+                                  width: 52,
+                                  height: 52,
+                                  color: Colors.grey[300],
+                                  child: const Icon(Icons.image, size: 26),
+                                ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('Image attached',
+                            style: GoogleFonts.inter(
+                                color: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.color ??
+                                    Colors.grey,
+                                fontSize: 13)),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: controller.clearImage,
+                        ),
+                      ],
+                    ),
+                  if (controller.selectedFileName.value != null)
+                    Row(
+                      children: [
+                        const Icon(Icons.description_outlined,
+                            size: 22, color: AppColors.secondary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            controller.selectedFileName.value!,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Image attached',
-                      style: GoogleFonts.inter(
-                          color:
-                              Theme.of(context).textTheme.bodyMedium?.color ??
-                                  Colors.grey,
-                          fontSize: 13)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: controller.clearImage,
-                  ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: controller.clearFile,
+                        ),
+                      ],
+                    ),
                 ],
               ),
             );
@@ -208,6 +248,12 @@ class ChatView extends GetView<ChatController> {
 
   /// Real-time streaming bubble — shows AI response as it generates token-by-token.
   Widget _buildStreamingBubble(BuildContext context, String text) {
+    final visibleText = _cleanStreamingText(text).trimLeft();
+    final thoughtParts = splitThoughtTags(visibleText);
+    final answerText = thoughtParts.answer.trimLeft();
+    final hasVisibleText =
+        thoughtParts.hasThought || _hasPrintableStreamingText(answerText);
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -230,26 +276,36 @@ class ChatView extends GetView<ChatController> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            text.isEmpty
+            !hasVisibleText
                 ? _buildTypingIndicator(context)
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: SelectableText(
-                          text,
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface,
-                            height: 1.4,
-                          ),
+                      if (thoughtParts.hasThought)
+                        ThoughtDisclosure(
+                          thought: thoughtParts.thought,
+                          isThinking: thoughtParts.isThinking,
+                          styleSheet: _thoughtMarkdownStyle(context),
                         ),
-                      ),
-                      // Blinking cursor at the end while still generating
-                      _BlinkingCursor(color: Theme.of(context).hintColor),
+                      if (_hasPrintableStreamingText(answerText))
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: MarkdownBody(
+                                data: answerText,
+                                selectable: true,
+                                styleSheet: _streamingMarkdownStyle(context),
+                              ),
+                            ),
+                            _BlinkingCursor(
+                              color: Theme.of(context).hintColor,
+                            ),
+                          ],
+                        ),
                     ],
                   ),
-            if (text.isNotEmpty)
+            if (hasVisibleText)
               Obx(() {
                 final inference = Get.find<InferenceService>();
                 if (inference.tokensPerSecond.value > 0) {
@@ -276,6 +332,68 @@ class ChatView extends GetView<ChatController> {
   /// Animated typing dots — shown only during prefill (before first token).
   Widget _buildTypingIndicator(BuildContext context) {
     return const _TypingDots();
+  }
+
+  MarkdownStyleSheet _streamingMarkdownStyle(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    final base = GoogleFonts.inter(fontSize: 14, color: color, height: 1.4);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 12,
+        color: color,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  MarkdownStyleSheet _thoughtMarkdownStyle(BuildContext context) {
+    final muted = Theme.of(context).hintColor;
+    final base = GoogleFonts.inter(fontSize: 12, color: muted, height: 1.35);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 11,
+        color: muted,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  String _cleanStreamingText(String text) {
+    return text
+        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
+        .replaceAll('\uFFFD', '');
+  }
+
+  bool _hasPrintableStreamingText(String text) {
+    for (final rune in text.runes) {
+      if (rune > 32 &&
+          rune != 0x7F &&
+          rune != 0x200B &&
+          rune != 0x200C &&
+          rune != 0x200D &&
+          rune != 0xFEFF &&
+          rune != 0xFFFD) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Model loading progress bar.
@@ -324,6 +442,124 @@ class ChatView extends GetView<ChatController> {
               ),
             ),
           ],
+        ),
+      );
+    });
+  }
+
+  Widget _buildContextUsageBar(BuildContext context) {
+    return Obx(() {
+      final settings = Get.find<SettingsController>();
+      final inference = Get.find<InferenceService>();
+      final chatStarted = controller.currentSessionId.value.isNotEmpty &&
+          controller.messages.isNotEmpty;
+      final isLocal = settings.inferenceMode.value == 'local';
+
+      if (!chatStarted || !isLocal) {
+        return const SizedBox.shrink();
+      }
+
+      final total = inference.contextTokensTotal.value > 0
+          ? inference.contextTokensTotal.value
+          : settings.contextSize.value;
+      final estimatedUsed = _estimateVisibleChatTokens();
+      final used = (inference.contextTokensUsed.value > 0
+              ? inference.contextTokensUsed.value
+              : estimatedUsed)
+          .clamp(0, total)
+          .toInt();
+      final available = (total - used).clamp(0, total).toInt();
+      final progress =
+          total == 0 ? 0.0 : (used / total).clamp(0.0, 1.0).toDouble();
+      final percent = (progress * 100).toStringAsFixed(0);
+      final isNearLimit = progress >= 0.75;
+      final accent = isNearLimit ? AppColors.warning : AppColors.secondary;
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            bottom:
+                BorderSide(color: Theme.of(context).dividerColor, width: 0.5),
+          ),
+        ),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context)
+                .colorScheme
+                .surfaceContainerHighest
+                .withValues(alpha: 0.62),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.22)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child:
+                        Icon(Icons.data_usage_rounded, size: 17, color: accent),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          inference.isModelLoaded.value
+                              ? 'Context tokens'
+                              : 'Estimated context',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_formatTokenCount(used)} used · ${_formatTokenCount(available)} available',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: Theme.of(context).hintColor,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    '$percent%',
+                    style: GoogleFonts.firaCode(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 9),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 5,
+                  backgroundColor:
+                      Theme.of(context).dividerColor.withValues(alpha: 0.35),
+                  color: accent,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     });
@@ -402,6 +638,16 @@ class ChatView extends GetView<ChatController> {
                     constraints: const BoxConstraints(),
                   );
                 }),
+                IconButton(
+                  icon: Icon(
+                    Icons.attach_file,
+                    color: Theme.of(context).hintColor,
+                    size: 22,
+                  ),
+                  onPressed: controller.pickFile,
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(),
+                ),
                 // Text field
                 Expanded(
                   child: TextField(
@@ -568,132 +814,6 @@ class ChatView extends GetView<ChatController> {
     );
   }
 
-  void _showLoadModelSheet(BuildContext context) {
-    final modelController = Get.find<ModelController>();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.6,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).hintColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Load Model',
-                style: GoogleFonts.inter(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-            ),
-            const Divider(height: 1),
-            Flexible(
-              child: Obx(() {
-                final downloaded = modelController.downloadedFiles;
-                if (downloaded.isEmpty) {
-                  return Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.download_outlined,
-                            size: 48, color: Theme.of(context).hintColor),
-                        const SizedBox(height: 12),
-                        Text(
-                          'No models downloaded',
-                          style: GoogleFonts.inter(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Theme.of(context).colorScheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Go to Models tab to download one.',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.inter(
-                            fontSize: 13,
-                            color: Theme.of(context).hintColor,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Get.find<HomeController>().changeTab(2);
-                          },
-                          icon: const Icon(Icons.download, size: 16),
-                          label: const Text('Go to Models'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: downloaded.length,
-                  itemBuilder: (context, index) {
-                    final filename = downloaded[index];
-                    final model = modelController.availableModels
-                        .firstWhereOrNull((m) => m.filename == filename);
-                    return ListTile(
-                      leading:
-                          const Icon(Icons.memory, color: AppColors.primary),
-                      title: Text(
-                        model?.name ?? filename,
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                      subtitle: Text(
-                        filename,
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          color: Theme.of(context).hintColor,
-                        ),
-                      ),
-                      trailing: ElevatedButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          modelController.loadModel(filename);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: Size.zero,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                        ),
-                        child: const Text('Load'),
-                      ),
-                    );
-                  },
-                );
-              }),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   String _formatDate(DateTime date) {
     final now = DateTime.now();
     final diff = now.difference(date);
@@ -702,6 +822,24 @@ class ChatView extends GetView<ChatController> {
     if (diff.inDays < 1) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
     return '${date.day}/${date.month}/${date.year}';
+  }
+
+  String _formatTokenCount(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    }
+    return value.toString();
+  }
+
+  int _estimateVisibleChatTokens() {
+    final chars = controller.messages.fold<int>(
+      0,
+      (sum, message) => sum + message.content.length,
+    );
+    return (chars / 4).ceil();
   }
 }
 

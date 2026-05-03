@@ -8,17 +8,20 @@ class LoadResult {
   final String message;
   final String gpuName;
   final int gpuLayers;
+  final String runtime;
   LoadResult({
     required this.success,
     required this.message,
     this.gpuName = '',
     this.gpuLayers = 0,
+    this.runtime = '',
   });
 }
 
 class InferenceEngine {
   Future<LoadResult> loadModel({
     required String modelPath,
+    String? modelRuntime,
     required int contextSize,
     required String deviceTier,
     void Function(double)? onProgress,
@@ -43,5 +46,6 @@ class InferenceEngine {
   }
 
   Future<void> stop() async {}
+  Future<dynamic> getContextInfo() async => null;
   Future<void> dispose() async {}
 }

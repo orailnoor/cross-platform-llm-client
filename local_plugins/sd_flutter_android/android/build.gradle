@@ -45,17 +45,6 @@ android {
 
     defaultConfig {
         minSdk = 24
-        externalNativeBuild {
-            cmake {
-                cppFlags "-std=c++17"
-            }
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path "CMakeLists.txt"
-        }
     }
 
     dependencies {

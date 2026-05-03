@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 import '../core/constants.dart';
 import '../services/hive_service.dart';
+import '../services/app_log_service.dart';
 
 class SettingsController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -17,11 +20,22 @@ class SettingsController extends GetxController {
   final googleKey = ''.obs;
   final kimiKey = ''.obs;
   final stabilityKey = ''.obs;
+  final nvidiaKey = ''.obs;
+  final openRouterKey = ''.obs;
+  final customCloudName = 'Custom API'.obs;
+  final customCloudBaseUrl = ''.obs;
+  final customCloudKey = ''.obs;
   final openaiModel = 'gpt-5.2'.obs;
   final anthropicModel = 'claude-sonnet-4-6'.obs;
   final googleModel = 'gemini-2.5-flash'.obs;
   final kimiModel = 'kimi-k2.6'.obs;
   final stabilityModel = 'sd3.5-flash'.obs;
+  final nvidiaModel = 'meta/llama-3.1-8b-instruct'.obs;
+  final openRouterModel = 'openai/gpt-4o-mini'.obs;
+  final customCloudModel = ''.obs;
+  final globalSystemPrompt = AppConstants.systemPrompt.obs;
+  final nvidiaModels = <String>[].obs;
+  final isLoadingNvidiaModels = false.obs;
   final temperature = 0.1.obs;
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
@@ -32,12 +46,21 @@ class SettingsController extends GetxController {
   final googleKeyController = TextEditingController();
   final kimiKeyController = TextEditingController();
   final stabilityKeyController = TextEditingController();
+  final nvidiaKeyController = TextEditingController();
+  final openRouterKeyController = TextEditingController();
+  final customCloudNameController = TextEditingController();
+  final customCloudBaseUrlController = TextEditingController();
+  final customCloudKeyController = TextEditingController();
+  final globalSystemPromptController = TextEditingController();
 
   final openaiModelController = TextEditingController();
   final anthropicModelController = TextEditingController();
   final googleModelController = TextEditingController();
   final kimiModelController = TextEditingController();
   final stabilityModelController = TextEditingController();
+  final nvidiaModelController = TextEditingController();
+  final openRouterModelController = TextEditingController();
+  final customCloudModelController = TextEditingController();
 
   Timer? _apiKeyDebounceTimer;
   Timer? _modelDebounceTimer;
@@ -55,11 +78,20 @@ class SettingsController extends GetxController {
     googleKeyController.dispose();
     kimiKeyController.dispose();
     stabilityKeyController.dispose();
+    nvidiaKeyController.dispose();
+    openRouterKeyController.dispose();
+    customCloudNameController.dispose();
+    customCloudBaseUrlController.dispose();
+    customCloudKeyController.dispose();
+    globalSystemPromptController.dispose();
     openaiModelController.dispose();
     anthropicModelController.dispose();
     googleModelController.dispose();
     kimiModelController.dispose();
     stabilityModelController.dispose();
+    nvidiaModelController.dispose();
+    openRouterModelController.dispose();
+    customCloudModelController.dispose();
     _apiKeyDebounceTimer?.cancel();
     _modelDebounceTimer?.cancel();
     super.onClose();
@@ -68,21 +100,62 @@ class SettingsController extends GetxController {
   void _loadSettings() {
     final savedTheme = _hive.getSetting<String>('theme_mode');
     themeMode.value = _themeModeFromString(savedTheme);
-    inferenceMode.value = _hive.getSetting(AppConstants.keyInferenceMode, defaultValue: 'cloud') ?? 'cloud';
-    cloudProvider.value = _hive.getSetting(AppConstants.keyCloudProvider, defaultValue: 'kimi') ?? 'kimi';
+    inferenceMode.value = _hive.getSetting(AppConstants.keyInferenceMode,
+            defaultValue: 'cloud') ??
+        'cloud';
+    cloudProvider.value =
+        _hive.getSetting(AppConstants.keyCloudProvider, defaultValue: 'kimi') ??
+            'kimi';
     openaiKey.value = _hive.getSetting(AppConstants.keyOpenaiKey) ?? '';
     anthropicKey.value = _hive.getSetting(AppConstants.keyAnthropicKey) ?? '';
     googleKey.value = _hive.getSetting(AppConstants.keyGoogleKey) ?? '';
     kimiKey.value = _hive.getSetting(AppConstants.keyKimiKey) ?? '';
     stabilityKey.value = _hive.getSetting(AppConstants.keyStabilityKey) ?? '';
-    openaiModel.value = _hive.getSetting(AppConstants.keyOpenaiModel, defaultValue: 'gpt-5.2') ?? 'gpt-5.2';
-    anthropicModel.value = _hive.getSetting(AppConstants.keyAnthropicModel, defaultValue: 'claude-sonnet-4-6') ?? 'claude-sonnet-4-6';
-    googleModel.value = _hive.getSetting(AppConstants.keyGoogleModel, defaultValue: 'gemini-2.5-flash') ?? 'gemini-2.5-flash';
-    kimiModel.value = _hive.getSetting(AppConstants.keyKimiModel, defaultValue: 'kimi-k2.6') ?? 'kimi-k2.6';
-    stabilityModel.value = _hive.getSetting(AppConstants.keyStabilityModel, defaultValue: 'sd3.5-flash') ?? 'sd3.5-flash';
-    temperature.value = _hive.getSetting(AppConstants.keyTemperature, defaultValue: AppConstants.defaultTemperature) ?? AppConstants.defaultTemperature;
-    maxTokens.value = _hive.getSetting(AppConstants.keyMaxTokens, defaultValue: AppConstants.defaultMaxTokens) ?? AppConstants.defaultMaxTokens;
-    contextSize.value = _hive.getSetting(AppConstants.keyContextSize, defaultValue: AppConstants.defaultContextSize) ?? AppConstants.defaultContextSize;
+    nvidiaKey.value = _hive.getSetting(AppConstants.keyNvidiaKey) ?? '';
+    openRouterKey.value = _hive.getSetting(AppConstants.keyOpenRouterKey) ?? '';
+    customCloudName.value = _hive.getSetting(AppConstants.keyCustomCloudName,
+            defaultValue: 'Custom API') ??
+        'Custom API';
+    customCloudBaseUrl.value =
+        _hive.getSetting(AppConstants.keyCustomCloudBaseUrl) ?? '';
+    customCloudKey.value =
+        _hive.getSetting(AppConstants.keyCustomCloudKey) ?? '';
+    openaiModel.value = _hive.getSetting(AppConstants.keyOpenaiModel,
+            defaultValue: 'gpt-5.2') ??
+        'gpt-5.2';
+    anthropicModel.value = _hive.getSetting(AppConstants.keyAnthropicModel,
+            defaultValue: 'claude-sonnet-4-6') ??
+        'claude-sonnet-4-6';
+    googleModel.value = _hive.getSetting(AppConstants.keyGoogleModel,
+            defaultValue: 'gemini-2.5-flash') ??
+        'gemini-2.5-flash';
+    kimiModel.value = _hive.getSetting(AppConstants.keyKimiModel,
+            defaultValue: 'kimi-k2.6') ??
+        'kimi-k2.6';
+    stabilityModel.value = _hive.getSetting(AppConstants.keyStabilityModel,
+            defaultValue: 'sd3.5-flash') ??
+        'sd3.5-flash';
+    nvidiaModel.value = _hive.getSetting(AppConstants.keyNvidiaModel,
+            defaultValue: 'meta/llama-3.1-8b-instruct') ??
+        'meta/llama-3.1-8b-instruct';
+    openRouterModel.value = _hive.getSetting(AppConstants.keyOpenRouterModel,
+            defaultValue: 'openai/gpt-4o-mini') ??
+        'openai/gpt-4o-mini';
+    customCloudModel.value =
+        _hive.getSetting(AppConstants.keyCustomCloudModel) ?? '';
+    globalSystemPrompt.value = _hive.getSetting(
+            AppConstants.keyGlobalSystemPrompt,
+            defaultValue: AppConstants.systemPrompt) ??
+        AppConstants.systemPrompt;
+    temperature.value = _hive.getSetting(AppConstants.keyTemperature,
+            defaultValue: AppConstants.defaultTemperature) ??
+        AppConstants.defaultTemperature;
+    maxTokens.value = _hive.getSetting(AppConstants.keyMaxTokens,
+            defaultValue: AppConstants.defaultMaxTokens) ??
+        AppConstants.defaultMaxTokens;
+    contextSize.value = _hive.getSetting(AppConstants.keyContextSize,
+            defaultValue: AppConstants.defaultContextSize) ??
+        AppConstants.defaultContextSize;
 
     // Sync controllers with loaded values
     openaiKeyController.text = openaiKey.value;
@@ -90,12 +163,21 @@ class SettingsController extends GetxController {
     googleKeyController.text = googleKey.value;
     kimiKeyController.text = kimiKey.value;
     stabilityKeyController.text = stabilityKey.value;
+    nvidiaKeyController.text = nvidiaKey.value;
+    openRouterKeyController.text = openRouterKey.value;
+    customCloudNameController.text = customCloudName.value;
+    customCloudBaseUrlController.text = customCloudBaseUrl.value;
+    customCloudKeyController.text = customCloudKey.value;
+    globalSystemPromptController.text = globalSystemPrompt.value;
 
     openaiModelController.text = openaiModel.value;
     anthropicModelController.text = anthropicModel.value;
     googleModelController.text = googleModel.value;
     kimiModelController.text = kimiModel.value;
     stabilityModelController.text = stabilityModel.value;
+    nvidiaModelController.text = nvidiaModel.value;
+    openRouterModelController.text = openRouterModel.value;
+    customCloudModelController.text = customCloudModel.value;
   }
 
   TextEditingController apiKeyControllerFor(String provider) {
@@ -108,6 +190,12 @@ class SettingsController extends GetxController {
         return kimiKeyController;
       case 'stability':
         return stabilityKeyController;
+      case 'nvidia':
+        return nvidiaKeyController;
+      case 'openrouter':
+        return openRouterKeyController;
+      case 'custom':
+        return customCloudKeyController;
       default:
         return openaiKeyController;
     }
@@ -123,6 +211,12 @@ class SettingsController extends GetxController {
         return kimiModelController;
       case 'stability':
         return stabilityModelController;
+      case 'nvidia':
+        return nvidiaModelController;
+      case 'openrouter':
+        return openRouterModelController;
+      case 'custom':
+        return customCloudModelController;
       default:
         return openaiModelController;
     }
@@ -166,6 +260,22 @@ class SettingsController extends GetxController {
         stabilityKeyController.text = trimmed;
         await _hive.setSetting(AppConstants.keyStabilityKey, trimmed);
         break;
+      case 'nvidia':
+        nvidiaKey.value = trimmed;
+        nvidiaKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyNvidiaKey, trimmed);
+        await refreshNvidiaModels();
+        break;
+      case 'openrouter':
+        openRouterKey.value = trimmed;
+        openRouterKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyOpenRouterKey, trimmed);
+        break;
+      case 'custom':
+        customCloudKey.value = trimmed;
+        customCloudKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyCustomCloudKey, trimmed);
+        break;
     }
   }
 
@@ -207,6 +317,87 @@ class SettingsController extends GetxController {
         stabilityModelController.text = model;
         await _hive.setSetting(AppConstants.keyStabilityModel, model);
         break;
+      case 'nvidia':
+        nvidiaModel.value = model;
+        nvidiaModelController.text = model;
+        await _hive.setSetting(AppConstants.keyNvidiaModel, model);
+        break;
+      case 'openrouter':
+        openRouterModel.value = model;
+        openRouterModelController.text = model;
+        await _hive.setSetting(AppConstants.keyOpenRouterModel, model);
+        break;
+      case 'custom':
+        customCloudModel.value = model;
+        customCloudModelController.text = model;
+        await _hive.setSetting(AppConstants.keyCustomCloudModel, model);
+        break;
+    }
+  }
+
+  Future<void> setCustomCloudConfig({
+    required String name,
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+  }) async {
+    final normalizedName = name.trim().isEmpty ? 'Custom API' : name.trim();
+    final normalizedBaseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+
+    customCloudName.value = normalizedName;
+    customCloudBaseUrl.value = normalizedBaseUrl;
+    customCloudKey.value = apiKey.trim();
+    customCloudModel.value = model.trim();
+
+    customCloudNameController.text = customCloudName.value;
+    customCloudBaseUrlController.text = customCloudBaseUrl.value;
+    customCloudKeyController.text = customCloudKey.value;
+    customCloudModelController.text = customCloudModel.value;
+
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudName, customCloudName.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudBaseUrl, customCloudBaseUrl.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudKey, customCloudKey.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudModel, customCloudModel.value);
+  }
+
+  Future<void> setGlobalSystemPrompt(String prompt) async {
+    final normalized =
+        prompt.trim().isEmpty ? AppConstants.systemPrompt : prompt.trim();
+    globalSystemPrompt.value = normalized;
+    globalSystemPromptController.text = normalized;
+    await _hive.setSetting(AppConstants.keyGlobalSystemPrompt, normalized);
+  }
+
+  Future<void> refreshNvidiaModels() async {
+    if (nvidiaKey.value.trim().isEmpty) return;
+    isLoadingNvidiaModels.value = true;
+    try {
+      final response = await http.get(
+        Uri.parse('${AppConstants.nvidiaEndpoint}/models'),
+        headers: {'Authorization': 'Bearer ${nvidiaKey.value.trim()}'},
+      );
+      if (response.statusCode != 200) {
+        Get.find<AppLogService>().warning(
+          'NVIDIA model list request failed',
+          details: '${response.statusCode}: ${response.body}',
+        );
+        return;
+      }
+      final data = jsonDecode(response.body);
+      final rawModels = data['data'] as List? ?? [];
+      nvidiaModels.value = rawModels
+          .map((model) => model is Map ? model['id']?.toString() : null)
+          .whereType<String>()
+          .toList();
+    } catch (e) {
+      Get.find<AppLogService>()
+          .warning('NVIDIA model list request failed', details: e);
+    } finally {
+      isLoadingNvidiaModels.value = false;
     }
   }
 
@@ -250,8 +441,10 @@ class SettingsController extends GetxController {
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-      systemNavigationBarColor: isDark ? const Color(0xFF0A0A0F) : const Color(0xFFF8F9FA),
-      systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor:
+          isDark ? const Color(0xFF0A0A0F) : const Color(0xFFF8F9FA),
+      systemNavigationBarIconBrightness:
+          isDark ? Brightness.light : Brightness.dark,
     ));
   }
 
