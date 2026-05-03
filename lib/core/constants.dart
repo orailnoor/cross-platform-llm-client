@@ -50,12 +50,14 @@ class AppConstants {
   static const String keyServerCloudflareUrl = 'server_cloudflare_url';
   static const String keyServerNgrokToken = 'server_ngrok_token';
   static const String keyServerNgrokDomain = 'server_ngrok_domain';
+  static const String keyImageSteps = 'image_steps';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
   static const int defaultMaxTokens = 1024;
   static const int defaultContextSize = 2048;
   static const String defaultLiteRtPerformanceMode = 'auto_fast';
+  static const int defaultImageSteps = 4;
 
   // System Prompt (compact for small context models)
   static const String systemPrompt =

@@ -42,7 +42,7 @@ class ModelController extends GetxController {
   final importTotalBytes = 0.obs;
   final importBytesPerSecond = 0.0.obs;
 
-  static const localFilters = ['downloaded', 'general', 'uncensored', 'vision'];
+  static const localFilters = ['downloaded', 'general', 'image', 'uncensored', 'vision'];
 
   List<AiModel> get displayedModels {
     final active = _inference.loadedModelName.value;
@@ -74,6 +74,8 @@ class ModelController extends GetxController {
           return isUncensoredModel(model);
         case 'vision':
           return isVisionModel(model);
+        case 'image':
+          return isImageModel(model);
         case 'general':
         default:
           return isGeneralModel(model);
@@ -424,7 +426,14 @@ class ModelController extends GetxController {
     }
     if (isLiteRt && !await _confirmLiteRtGpuWarning()) return;
 
-    if (filename.toLowerCase().endsWith('.safetensors')) {
+    if (isImageModel(model ?? AiModel(
+          name: filename,
+          filename: filename,
+          url: '',
+          size: '',
+          description: '',
+          template: '',
+        ))) {
       final result = await _localImage.loadModel(path, modelName: filename);
       Get.snackbar('Image Model', result, snackPosition: SnackPosition.BOTTOM);
     } else {
@@ -665,6 +674,7 @@ class ModelController extends GetxController {
 
   Future<void> unloadModel() async {
     await _inference.unloadModel();
+    await _localImage.unloadModel();
   }
 
   Future<void> importModelFromStorage() async {

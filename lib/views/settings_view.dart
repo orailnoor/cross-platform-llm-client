@@ -89,6 +89,20 @@ class SettingsView extends GetView<SettingsController> {
                     'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
                 icon: Icons.memory,
               ),
+              _buildSmartSlider(
+                context: context,
+                label: 'Image Generation Steps',
+                value: controller.imageSteps.value.toDouble(),
+                min: 1,
+                max: 20,
+                divisions: 19,
+                safeMax: 8,
+                onChanged: (v) => controller.setImageSteps(v.toInt()),
+                displayValue: controller.imageSteps.value.toString(),
+                warningMessage:
+                    'More steps = better quality but MUCH slower on phone CPU! 1–4 steps recommended.',
+                icon: Icons.image,
+              ),
               const SizedBox(height: 20),
 
               // ── About ───────────────────────────
