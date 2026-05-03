@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -5,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 class ThoughtDisclosure extends StatefulWidget {
   final String thought;
   final bool isThinking;
+  final int? durationSeconds;
   final MarkdownStyleSheet styleSheet;
 
   const ThoughtDisclosure({
@@ -12,6 +15,7 @@ class ThoughtDisclosure extends StatefulWidget {
     required this.thought,
     required this.styleSheet,
     this.isThinking = false,
+    this.durationSeconds,
   });
 
   @override
@@ -19,7 +23,54 @@ class ThoughtDisclosure extends StatefulWidget {
 }
 
 class _ThoughtDisclosureState extends State<ThoughtDisclosure> {
-  bool _expanded = false;
+  late bool _expanded;
+  late DateTime _startedAt;
+  Timer? _timer;
+  int _liveSeconds = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.isThinking;
+    _startedAt = DateTime.now();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant ThoughtDisclosure oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (widget.isThinking && !oldWidget.isThinking) {
+      _expanded = true;
+      _startedAt = DateTime.now();
+      _liveSeconds = 0;
+    } else if (!widget.isThinking && oldWidget.isThinking) {
+      _expanded = false;
+      _liveSeconds = widget.durationSeconds ?? _liveSeconds;
+    }
+
+    _syncTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTimer() {
+    if (!widget.isThinking) {
+      _timer?.cancel();
+      _timer = null;
+      return;
+    }
+    _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _liveSeconds = DateTime.now().difference(_startedAt).inSeconds;
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +99,7 @@ class _ThoughtDisclosureState extends State<ThoughtDisclosure> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    widget.isThinking ? 'Thinking...' : 'Thought',
+                    _label,
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       color: muted,
@@ -79,5 +130,13 @@ class _ThoughtDisclosureState extends State<ThoughtDisclosure> {
         ],
       ),
     );
+  }
+
+  String get _label {
+    final seconds = widget.durationSeconds ?? _liveSeconds;
+    if (widget.isThinking) {
+      return seconds > 0 ? 'Thinking for ${seconds}s...' : 'Thinking...';
+    }
+    return seconds > 0 ? 'Thought for ${seconds}s' : 'Thought';
   }
 }

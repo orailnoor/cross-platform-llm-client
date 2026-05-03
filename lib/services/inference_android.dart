@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, Directory;
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 
@@ -31,6 +32,8 @@ class InferenceEngine {
   Timer? _idleTimer;
   void Function()? _onStop;
   bool _isLiteRt = false;
+  bool _disposed = false;
+  bool _hasLoadedModel = false;
 
   Future<LoadResult> loadModel({
     required String modelPath,
@@ -39,9 +42,10 @@ class InferenceEngine {
     required String deviceTier,
     void Function(double)? onProgress,
   }) async {
+    _disposed = false;
     final runtime = _runtimeFor(modelPath, modelRuntime);
     if (runtime == 'litert') {
-      return _loadLiteRtModel(modelPath);
+      return _loadLiteRtModel(modelPath, onProgress: onProgress);
     }
 
     _isLiteRt = false;
@@ -99,7 +103,7 @@ class InferenceEngine {
     // ── Load Progress ──
     try {
       _controller!.loadProgress.listen((progress) {
-        onProgress?.call(progress);
+        onProgress?.call(_normalizeProgress(progress));
       });
     } catch (_) {}
 
@@ -110,6 +114,7 @@ class InferenceEngine {
       contextSize: contextSize,
       gpuLayers: gpuLayers,
     );
+    _hasLoadedModel = true;
 
     final accel = gpuLayers > 0
         ? 'GPU ($gpuLayers layers, $gpuNameStr)'
@@ -125,7 +130,10 @@ class InferenceEngine {
     );
   }
 
-  Future<LoadResult> _loadLiteRtModel(String modelPath) async {
+  Future<LoadResult> _loadLiteRtModel(
+    String modelPath, {
+    void Function(double)? onProgress,
+  }) async {
     if (!Platform.isAndroid) {
       throw UnsupportedError(
           'LiteRT-LM is enabled for Android only in this app.');
@@ -135,12 +143,28 @@ class InferenceEngine {
     _controller = null;
 
     try {
+      onProgress?.call(0.05);
+      // Clear the cache directory to prevent OpenCL delegate crashes 
+      // from corrupted serialized context data.
+      final tempDir = await getTemporaryDirectory();
+      final cacheDir = Directory('${tempDir.path}/litert_cache');
+      if (await cacheDir.exists()) {
+        try {
+          await cacheDir.delete(recursive: true);
+        } catch (_) {}
+      }
+      await cacheDir.create(recursive: true);
+      onProgress?.call(0.18);
+
       _liteEngine = await LiteLmEngine.create(
         LiteLmEngineConfig(
           modelPath: modelPath,
           backend: LiteLmBackend.cpu,
+          cacheDir: cacheDir.path,
         ),
       );
+      _hasLoadedModel = true;
+      onProgress?.call(0.92);
       print('[Inference] LiteRT-LM loaded with CPU backend');
       return LoadResult(
         success: true,
@@ -153,6 +177,12 @@ class InferenceEngine {
       print('[Inference] LiteRT-LM CPU load failed: $error');
       rethrow;
     }
+  }
+
+  double _normalizeProgress(double progress) {
+    if (progress.isNaN || progress.isInfinite) return 0.0;
+    final normalized = progress > 1 ? progress / 100 : progress;
+    return normalized.clamp(0.0, 1.0).toDouble();
   }
 
   Future<String> generate({
@@ -376,6 +406,7 @@ class InferenceEngine {
   }
 
   Future<void> stop() async {
+    if (_disposed) return;
     _idleTimer?.cancel();
     _subscription?.cancel();
     if (_isLiteRt) {
@@ -402,10 +433,14 @@ class InferenceEngine {
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
     await stop();
-    try {
-      await _controller?.dispose();
-    } catch (_) {}
+    _disposed = true;
+    if (_hasLoadedModel) {
+      try {
+        await _controller?.dispose();
+      } catch (_) {}
+    }
     try {
       await _liteConversation?.dispose();
     } catch (_) {}
@@ -416,6 +451,7 @@ class InferenceEngine {
     _liteConversation = null;
     _liteEngine = null;
     _isLiteRt = false;
+    _hasLoadedModel = false;
   }
 
   // ── Helpers ──

@@ -71,19 +71,51 @@ class InferenceService extends GetxService {
 
       final deviceTier = _getDeviceTier();
 
-      final result = await _engine!.loadModel(
+      final requestedModelName = modelName ?? modelPath.split('/').last;
+      var activeModelName = requestedModelName;
+      var result = await _loadModelOnEngine(
         modelPath: modelPath,
         modelRuntime: modelRuntime,
         contextSize: contextSize,
         deviceTier: deviceTier,
-        onProgress: (p) => modelLoadProgress.value = p,
       );
+
+      if (!result.success &&
+          result.message.toLowerCase().contains('model already loaded')) {
+        final savedModelName =
+            _hive.getSetting<String>(AppConstants.keyLocalModelName) ?? '';
+        final adoptedModelName =
+            savedModelName.isNotEmpty ? savedModelName : requestedModelName;
+        activeModelName = adoptedModelName;
+        result = platform.LoadResult(
+          success: true,
+          message: savedModelName == requestedModelName
+              ? 'Model already loaded.'
+              : 'A native model is already loaded. Unload it before loading another model.',
+          runtime: modelRuntime ??
+              _hive.getSetting<String>(AppConstants.keyLocalModelRuntime) ??
+              '',
+        );
+      }
+
+      if (!result.success) {
+        isModelLoaded.value = false;
+        isLoadingModel.value = false;
+        loadingModelName.value = '';
+        modelLoadProgress.value = 0.0;
+        loadedModelName.value = '';
+        loadedModelRuntime.value = '';
+        gpuName.value = '';
+        gpuLayersUsed.value = 0;
+        isGpuAccelerated.value = false;
+        return result.message;
+      }
 
       isModelLoaded.value = result.success;
       isLoadingModel.value = false;
       loadingModelName.value = '';
       modelLoadProgress.value = 1.0;
-      loadedModelName.value = modelName ?? modelPath.split('/').last;
+      loadedModelName.value = activeModelName;
       loadedModelRuntime.value = result.runtime;
       gpuName.value = result.gpuName;
       gpuLayersUsed.value = result.gpuLayers;
@@ -109,9 +141,12 @@ class InferenceService extends GetxService {
   }
 
   Future<void> unloadModel() async {
-    await stopGeneration();
-    await _engine?.dispose();
+    final engine = _engine;
     _engine = null;
+    if (engine != null) {
+      await stopGeneration();
+      await engine.dispose();
+    }
     isModelLoaded.value = false;
     isVisionLoaded.value = false;
     loadedModelName.value = '';
@@ -230,5 +265,33 @@ class InferenceService extends GetxService {
     } catch (_) {
       return 'mid';
     }
+  }
+
+  Future<platform.LoadResult> _loadModelOnEngine({
+    required String modelPath,
+    required String? modelRuntime,
+    required int contextSize,
+    required String deviceTier,
+  }) async {
+    try {
+      return await _engine!.loadModel(
+        modelPath: modelPath,
+        modelRuntime: modelRuntime,
+        contextSize: contextSize,
+        deviceTier: deviceTier,
+        onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
+      );
+    } catch (e) {
+      return platform.LoadResult(
+        success: false,
+        message: 'ERROR: Failed to load model — $e',
+      );
+    }
+  }
+
+  double _normalizeProgress(double progress) {
+    if (progress.isNaN || progress.isInfinite) return 0.0;
+    final normalized = progress > 1 ? progress / 100 : progress;
+    return normalized.clamp(0.0, 1.0).toDouble();
   }
 }

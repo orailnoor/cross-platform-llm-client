@@ -219,6 +219,23 @@ class ChatController extends GetxController {
     _scrollToBottom();
 
     try {
+      DateTime? thoughtStartedAt;
+      int? thoughtDurationSeconds;
+
+      void trackThoughtTiming() {
+        final parts = splitThoughtTags(streamingResponse.value);
+        if (parts.hasThought && parts.isThinking && thoughtStartedAt == null) {
+          thoughtStartedAt = DateTime.now();
+        }
+        if (parts.hasThought &&
+            !parts.isThinking &&
+            thoughtStartedAt != null &&
+            thoughtDurationSeconds == null) {
+          thoughtDurationSeconds =
+              DateTime.now().difference(thoughtStartedAt!).inSeconds;
+        }
+      }
+
       final inferenceMode = _hive.getSetting(
             AppConstants.keyInferenceMode,
             defaultValue: 'cloud',
@@ -247,6 +264,7 @@ class ChatController extends GetxController {
             prompt: text,
             onProgress: (step, total) {
               streamingResponse.value = 'Generating locally... ($step/$total)';
+              trackThoughtTiming();
               _scrollToBottom();
             },
           );
@@ -271,6 +289,7 @@ class ChatController extends GetxController {
             onToken: (token) {
               // Real-time streaming update
               streamingResponse.value += token;
+              trackThoughtTiming();
               _scrollToBottom();
             },
           );
@@ -286,9 +305,15 @@ class ChatController extends GetxController {
           imageBase64: imgBase64,
           onToken: (token) {
             streamingResponse.value += token;
+            trackThoughtTiming();
             _scrollToBottom();
           },
         );
+      }
+
+      if (thoughtStartedAt != null && thoughtDurationSeconds == null) {
+        thoughtDurationSeconds =
+            DateTime.now().difference(thoughtStartedAt!).inSeconds;
       }
 
       // Stop streaming UI
@@ -312,6 +337,7 @@ class ChatController extends GetxController {
         content: rawResponse,
         imageBase64: outImageBase64,
         tokensPerSec: tps,
+        thoughtDurationSeconds: thoughtDurationSeconds,
       );
       messages.add(aiMsg);
       _hive.saveMessage(aiMsg.id, aiMsg.toMap());

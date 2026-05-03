@@ -39,28 +39,6 @@ class ModelView extends GetView<ModelController> {
               ],
             );
           }),
-          Obx(() {
-            final inference = Get.find<InferenceService>();
-            if (controller.modelScope.value == 'local' &&
-                inference.isModelLoaded.value) {
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: TextButton.icon(
-                  onPressed: () => controller.unloadModel(),
-                  icon: const Icon(Icons.eject,
-                      size: 16, color: AppColors.warning),
-                  label: Text(
-                    'Unload',
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      color: AppColors.warning,
-                    ),
-                  ),
-                ),
-              );
-            }
-            return const SizedBox.shrink();
-          }),
         ],
       ),
       body: RefreshIndicator(
@@ -80,8 +58,6 @@ class ModelView extends GetView<ModelController> {
                 const SizedBox(height: 12),
 
                 if (controller.modelScope.value == 'local') ...[
-                  _buildLocalActions(context),
-                  const SizedBox(height: 12),
                   _buildImportingProgress(context),
                   _buildLocalSummary(context),
                   const SizedBox(height: 10),
@@ -389,90 +365,7 @@ class ModelView extends GetView<ModelController> {
 
       final inference = Get.find<InferenceService>();
       if (!inference.isModelLoaded.value) {
-        if (controller.canLoadLastModel) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.35), width: 0.8),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(9),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.history,
-                      color: AppColors.primary, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Last loaded model',
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          color: Theme.of(context).hintColor,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        controller.lastLoadedModelName,
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () =>
-                      controller.loadModel(controller.lastLoadedModelName),
-                  icon: const Icon(Icons.play_arrow, size: 16),
-                  label: const Text('Load'),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(12),
-            border:
-                Border.all(color: Theme.of(context).dividerColor, width: 0.5),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.info_outline,
-                  color: Theme.of(context).hintColor, size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'No model loaded. Download and load a model for local inference.',
-                  style: GoogleFonts.inter(
-                    fontSize: 13,
-                    color: Theme.of(context).textTheme.bodyMedium?.color ??
-                        Colors.grey,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
+        return const SizedBox.shrink();
       }
 
       final percent = inference.modelLoadProgress.value * 100;
@@ -1505,6 +1398,9 @@ class ModelView extends GetView<ModelController> {
       final disableActions = controller.isImporting.value ||
           isAnyModelLoading ||
           isCurrentlyDownloading;
+      final loadPercent = (inference.modelLoadProgress.value * 100)
+          .clamp(0.0, 100.0)
+          .toStringAsFixed(0);
 
       return Card(
         margin: const EdgeInsets.only(bottom: 10),
@@ -1573,10 +1469,20 @@ class ModelView extends GetView<ModelController> {
                               ? null
                               : () => controller.loadModel(model.filename),
                           icon: Icon(
-                            isActive ? Icons.check : Icons.play_arrow,
+                            isThisModelLoading
+                                ? Icons.hourglass_top_rounded
+                                : isActive
+                                    ? Icons.check
+                                    : Icons.play_arrow,
                             size: 16,
                           ),
-                          label: Text(isActive ? 'Active' : 'Load'),
+                          label: Text(
+                            isThisModelLoading
+                                ? 'Loading $loadPercent%'
+                                : isActive
+                                    ? 'Active'
+                                    : 'Load',
+                          ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: isActive
                                 ? AppColors.success
@@ -1594,11 +1500,20 @@ class ModelView extends GetView<ModelController> {
                       ),
                       const SizedBox(width: 8),
                       IconButton(
+                        tooltip: isActive ? 'Unload model' : 'Delete model',
                         onPressed: disableActions
                             ? null
-                            : () => controller.deleteModel(model.filename),
-                        icon: const Icon(Icons.delete_outline,
-                            size: 18, color: AppColors.error),
+                            : isActive
+                                ? () => controller.unloadModel()
+                                : () => controller.deleteModel(model.filename),
+                        icon: Icon(
+                          isActive
+                              ? Icons.eject_outlined
+                              : Icons.delete_outline,
+                          size: 18,
+                          color:
+                              isActive ? AppColors.warning : AppColors.error,
+                        ),
                       ),
                     ] else ...[
                       Expanded(

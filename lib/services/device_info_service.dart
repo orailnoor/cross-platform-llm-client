@@ -59,9 +59,7 @@ class DeviceInfoService extends GetxService {
   }
 
   Future<DeviceInfoService> init() async {
-    final info = await platform_info.getDeviceInfo();
-    totalRamGB.value = info['totalRamGB'] as double;
-    availableRamGB.value = info['availableRamGB'] as double;
+    await refreshMemoryInfo();
 
     // Classify device tier
     final ram = totalRamGB.value;
@@ -79,6 +77,12 @@ class DeviceInfoService extends GetxService {
         '${availableRamGB.value.toStringAsFixed(1)}GB available, '
         'tier: ${deviceTier.value}');
     return this;
+  }
+
+  Future<void> refreshMemoryInfo() async {
+    final info = await platform_info.getDeviceInfo();
+    totalRamGB.value = info['totalRamGB'] as double;
+    availableRamGB.value = info['availableRamGB'] as double;
   }
 
   String get tierDescription {

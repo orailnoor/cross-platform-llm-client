@@ -8,9 +8,12 @@ import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
 import '../services/hive_service.dart';
 import '../services/app_log_service.dart';
+import '../services/device_info_service.dart';
 import '../models/ai_model.dart';
 import '../core/constants.dart';
 import 'settings_controller.dart';
+
+enum _ModelLoadAction { cancel, unload, continueLoad }
 
 class ModelController extends GetxController {
   final DownloadService _download = Get.find<DownloadService>();
@@ -386,13 +389,24 @@ class ModelController extends GetxController {
       return;
     }
     final path = await _download.modelPath(filename);
+    final model = availableModels.firstWhereOrNull((m) => m.filename == filename);
+    final fileBytes = await _modelFileBytes(filename, path, model);
+    final loadAction = await _confirmModelLoadSafety(
+      filename: filename,
+      fileBytes: fileBytes,
+      isLiteRt: filename.toLowerCase().endsWith('.litertlm') ||
+          model?.runtime == AiModel.runtimeLiteRt,
+    );
+    if (loadAction == _ModelLoadAction.cancel) return;
+    if (loadAction == _ModelLoadAction.unload) {
+      await unloadModel();
+      return;
+    }
 
     if (filename.toLowerCase().endsWith('.safetensors')) {
       final result = await _localImage.loadModel(path, modelName: filename);
       Get.snackbar('Image Model', result, snackPosition: SnackPosition.BOTTOM);
     } else {
-      final model =
-          availableModels.firstWhereOrNull((m) => m.filename == filename);
       final result = await _inference.loadModel(
         path,
         modelName: filename,
@@ -403,6 +417,128 @@ class ModelController extends GetxController {
         await _settings.setInferenceMode('local');
       }
       Get.snackbar('Text Model', result, snackPosition: SnackPosition.BOTTOM);
+    }
+  }
+
+  Future<int> _modelFileBytes(
+    String filename,
+    String path,
+    AiModel? model,
+  ) async {
+    final cached = fileSizes[filename] ?? 0;
+    if (cached > 0) return cached;
+    try {
+      final bytes = await File(path).length();
+      fileSizes[filename] = bytes;
+      return bytes;
+    } catch (_) {
+      return model == null ? 0 : _knownModelBytes(model);
+    }
+  }
+
+  Future<_ModelLoadAction> _confirmModelLoadSafety({
+    required String filename,
+    required int fileBytes,
+    required bool isLiteRt,
+  }) async {
+    final availableRamGb = await _refreshAvailableRamGb();
+
+    final availableBytes = (availableRamGb * 1024 * 1024 * 1024).round();
+    final modelLabel = fileBytes > 0
+        ? DownloadService.formatWholeMb(fileBytes)
+        : 'Unknown size';
+    final ramLabel = availableBytes > 0
+        ? DownloadService.formatWholeMb(availableBytes)
+        : 'Unknown';
+    final lower = filename.toLowerCase();
+    final hasMeasuredMemory = availableBytes > 0 && fileBytes > 0;
+    final isCriticallyLow =
+        hasMeasuredMemory &&
+            (availableBytes < fileBytes || _isLowMemoryBytes(availableBytes));
+    final isLargeForRam =
+        availableBytes > 0 && fileBytes > 0 && availableBytes < fileBytes * 2;
+    final isLowRam = availableBytes > 0 && _isLowMemoryBytes(availableBytes);
+    final String warning;
+    if (isCriticallyLow) {
+      warning =
+          'Available RAM is lower than recommended. This can crash the app if Android cannot reserve enough memory.';
+    } else if (isLargeForRam || isLowRam || isLiteRt) {
+      warning =
+          'This can crash the app if Android cannot reserve enough memory for the model.';
+    } else {
+      warning = 'Loading local models can use more memory than the file size.';
+    }
+    final runtimeLabel = isLiteRt
+        ? 'LiteRT-LM'
+        : lower.endsWith('.gguf')
+            ? 'GGUF'
+            : lower.endsWith('.safetensors')
+                ? 'Image model'
+                : 'Local model';
+    final loadedName = _inference.loadedModelName.value;
+    final hasLoadedModel =
+        _inference.isModelLoaded.value && loadedName.isNotEmpty;
+    final isSameModelLoaded = hasLoadedModel && loadedName == filename;
+
+    final result = await Get.dialog<_ModelLoadAction>(
+      AlertDialog(
+        title: Text(isCriticallyLow ? 'Low RAM warning' : 'Load model?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(filename),
+            const SizedBox(height: 12),
+            Text('Runtime: $runtimeLabel'),
+            Text('Available RAM: $ramLabel'),
+            Text('Model size: $modelLabel'),
+            if (hasLoadedModel) ...[
+              const SizedBox(height: 12),
+              Text(
+                isSameModelLoaded
+                    ? 'This model is already loaded.'
+                    : 'Already loaded: $loadedName',
+              ),
+              if (!isSameModelLoaded)
+                const Text('Unload it before loading another model.'),
+            ],
+            const SizedBox(height: 12),
+            Text(warning),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: _ModelLoadAction.cancel),
+            child: const Text('Cancel'),
+          ),
+          if (hasLoadedModel)
+            TextButton(
+              onPressed: () => Get.back(result: _ModelLoadAction.unload),
+              child: const Text('Unload'),
+            ),
+          ElevatedButton(
+            onPressed: () async {
+              await _refreshAvailableRamGb();
+              Get.back(result: _ModelLoadAction.continueLoad);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+    return result ?? _ModelLoadAction.cancel;
+  }
+
+  bool _isLowMemoryBytes(int bytes) => bytes < 768 * 1024 * 1024;
+
+  Future<double> _refreshAvailableRamGb() async {
+    try {
+      final device = Get.find<DeviceInfoService>();
+      await device.refreshMemoryInfo();
+      return device.availableRamGB.value;
+    } catch (_) {
+      return 0;
     }
   }
 

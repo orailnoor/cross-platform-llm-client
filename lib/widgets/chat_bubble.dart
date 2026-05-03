@@ -67,6 +67,7 @@ class ChatBubble extends StatelessWidget {
             if (!isUser && thoughtParts.hasThought)
               ThoughtDisclosure(
                 thought: thoughtParts.thought,
+                durationSeconds: message.thoughtDurationSeconds,
                 styleSheet: _thoughtMarkdownStyle(context),
               ),
             if (isUser)

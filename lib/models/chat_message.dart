@@ -10,6 +10,7 @@ class ChatMessage {
   final String? cmdOutput; // Result of CMD: execution
   final bool isCommand;
   final double? tokensPerSec;
+  final int? thoughtDurationSeconds;
   final DateTime timestamp;
 
   ChatMessage({
@@ -24,6 +25,7 @@ class ChatMessage {
     this.cmdOutput,
     this.isCommand = false,
     this.tokensPerSec,
+    this.thoughtDurationSeconds,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
@@ -39,6 +41,7 @@ class ChatMessage {
         'cmdOutput': cmdOutput,
         'isCommand': isCommand,
         'tokensPerSec': tokensPerSec,
+        'thoughtDurationSeconds': thoughtDurationSeconds,
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -55,6 +58,9 @@ class ChatMessage {
         isCommand: map['isCommand'] ?? false,
         tokensPerSec: map['tokensPerSec'] != null
             ? (map['tokensPerSec'] as num).toDouble()
+            : null,
+        thoughtDurationSeconds: map['thoughtDurationSeconds'] != null
+            ? (map['thoughtDurationSeconds'] as num).toInt()
             : null,
         timestamp: DateTime.tryParse(map['timestamp'] ?? '') ?? DateTime.now(),
       );
