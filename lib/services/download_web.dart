@@ -6,6 +6,10 @@ Future<bool> isModelDownloaded(String path) async => false;
 
 Future<List<String>> getDownloadedModels(String modelsDir) async => [];
 
+Future<int> getModelSize(String path) async => 0;
+
+Future<int> getRemoteFileSize(String url, {String? authToken}) async => 0;
+
 Future<String> downloadModel({
   required String url,
   required String savePath,

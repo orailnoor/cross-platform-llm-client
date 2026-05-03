@@ -3,6 +3,7 @@ package com.write4me.llama_flutter_android
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import kotlinx.coroutines.*
@@ -16,14 +17,14 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     private val isModelLoaded = AtomicBoolean(false)
     private val isStopping = AtomicBoolean(false)
     private var currentModelPath: String? = null
+    private var nativeLoadError: Throwable? = null
 
     companion object {
-        init {
-            System.loadLibrary("llama_jni")
-        }
+        private const val TAG = "LlamaFlutterPlugin"
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        Log.i(TAG, "Attaching llama Flutter plugin")
         context = binding.applicationContext
         flutterApi = LlamaFlutterApi(binding.binaryMessenger)
         LlamaHostApi.setUp(binding.binaryMessenger, this)
@@ -38,6 +39,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun loadModel(config: ModelConfig, callback: (Result<Unit>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+
         scope.launch {
             try {
                 // Start foreground service for long-running task
@@ -79,6 +85,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun generate(request: GenerateRequest, callback: (Result<Unit>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+
         if (!isModelLoaded.get()) {
             callback(Result.failure(IllegalStateException("Model not loaded")))
             return
@@ -147,7 +158,9 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     override fun stop(callback: (Result<Unit>) -> Unit) {
         isStopping.set(true)
         generationJob?.cancel()
-        nativeStop()
+        if (nativeLoadError == null) {
+            nativeStop()
+        }
         callback(Result.success(Unit))
     }
 
@@ -176,6 +189,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun generateChat(request: ChatRequest, callback: (Result<Unit>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+
         if (!isModelLoaded.get()) {
             callback(Result.failure(IllegalStateException("Model not loaded")))
             return
@@ -257,6 +275,8 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun getContextInfo(): ContextInfo {
+        ensureNativeLoaded()?.let { throw it }
+
         val tokensUsed = nativeGetTokensUsed().toLong()
         val contextSize = nativeGetContextSize().toLong()
         val usagePercentage = if (contextSize > 0) {
@@ -273,6 +293,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun clearContext(callback: (Result<Unit>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+
         scope.launch {
             try {
                 nativeClearContext()
@@ -288,6 +313,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun setSystemPromptLength(length: Long) {
+        ensureNativeLoaded()?.let { throw it }
         nativeSetSystemPromptLength(length.toInt())
     }
 
@@ -308,6 +334,11 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
     }
 
     override fun detectGpu(callback: (Result<GpuInfo>) -> Unit) {
+        ensureNativeLoaded()?.let {
+            callback(Result.failure(it))
+            return
+        }
+
         scope.launch {
             try {
                 val outStats = LongArray(2) { -1L }
@@ -350,6 +381,19 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
                     )))
                 }
             }
+        }
+    }
+
+    private fun ensureNativeLoaded(): Throwable? {
+        nativeLoadError?.let { return it }
+
+        return try {
+            System.loadLibrary("llama_jni")
+            null
+        } catch (t: Throwable) {
+            nativeLoadError = t
+            Log.e(TAG, "Failed to load llama native library", t)
+            IllegalStateException("Failed to load llama native library: ${t.message}", t)
         }
     }
 

@@ -26,7 +26,7 @@ class LlamaController implements LlamaFlutterApi {
     int? gpuLayers,
   }) async {
     if (_isLoading) throw StateError('Already loading');
-    final loaded = await isModelLoaded();
+    final loaded = await _safeIsModelLoaded();
     if (loaded) throw StateError('Model already loaded');
 
     _isLoading = true;
@@ -108,6 +108,17 @@ class LlamaController implements LlamaFlutterApi {
 
   /// Check if model is loaded
   Future<bool> isModelLoaded() async => await _api.isModelLoaded();
+
+  Future<bool> _safeIsModelLoaded() async {
+    try {
+      return await _api.isModelLoaded();
+    } on PlatformException catch (e) {
+      if (e.code == 'channel-error') {
+        return false;
+      }
+      rethrow;
+    }
+  }
 
   /// Get list of supported chat templates
   Future<List<String>> getSupportedTemplates() async => await _api.getSupportedTemplates();

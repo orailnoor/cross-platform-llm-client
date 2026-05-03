@@ -12,6 +12,7 @@ import 'services/cloud_service.dart';
 import 'services/download_service.dart';
 import 'services/device_info_service.dart';
 import 'services/local_image_service.dart';
+import 'services/app_log_service.dart';
 import 'core/constants.dart';
 
 void main() async {
@@ -38,6 +39,7 @@ void main() async {
   Get.put(CloudService());
   Get.put(DownloadService());
   Get.put(LocalImageService());
+  Get.put(AppLogService());
 
   // Auto-configure inference settings based on device RAM
   _autoConfigureForDevice();
@@ -60,12 +62,12 @@ void _tryReloadModel() async {
 
   final hive = Get.find<HiveService>();
   final modelName = hive.getSetting<String>(AppConstants.keyLocalModelName);
-  
+
   if (modelName != null && modelName.isNotEmpty) {
     // Reconstruct dynamic path to prevent iOS App Container UUID changes breaking the load
     final downloadService = Get.find<DownloadService>();
     final dynamicPath = await downloadService.modelPath(modelName);
-    
+
     if (await downloadService.isModelDownloaded(modelName)) {
       await inference.loadModel(dynamicPath, modelName: modelName);
     } else {

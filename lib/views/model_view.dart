@@ -14,8 +14,14 @@ class ModelView extends GetView<ModelController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Models', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text('Models',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.add_link),
+            tooltip: 'Add Model URL',
+            onPressed: () => _showAddUrlDialog(context),
+          ),
           IconButton(
             icon: const Icon(Icons.file_upload_outlined),
             tooltip: 'Import from Storage',
@@ -28,7 +34,8 @@ class ModelView extends GetView<ModelController> {
                 padding: const EdgeInsets.only(right: 8),
                 child: TextButton.icon(
                   onPressed: () => controller.unloadModel(),
-                  icon: const Icon(Icons.eject, size: 16, color: AppColors.warning),
+                  icon: const Icon(Icons.eject,
+                      size: 16, color: AppColors.warning),
                   label: Text(
                     'Unload',
                     style: GoogleFonts.inter(
@@ -56,13 +63,9 @@ class ModelView extends GetView<ModelController> {
                 // Model importing progress
                 _buildImportingProgress(context),
 
-                // Download progress (list all active downloads)
-                ...controller.activeDownloads.values
-                    .map((dp) => _buildDownloadProgress(context, dp)),
-
                 // Available models
                 Text(
-                  'AVAILABLE MODELS',
+                  'AVAILABLE MODELS (${controller.displayedModels.length})',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -71,12 +74,122 @@ class ModelView extends GetView<ModelController> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                ...controller.availableModels
+                ...controller.displayedModels
                     .map((model) => _buildModelCard(context, model)),
               ],
             )),
       ),
     );
+  }
+
+  void _showAddUrlDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    final urlController = TextEditingController();
+    final filenameController = TextEditingController();
+    final sizeController = TextEditingController();
+    final descriptionController = TextEditingController();
+    final templateController = TextEditingController(text: 'chatml');
+    final isVision = false.obs;
+    final isDetecting = false.obs;
+
+    Get.dialog(AlertDialog(
+      title: Text('Add Model URL',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(labelText: 'Model URL'),
+              onChanged: (value) {
+                if (filenameController.text.trim().isEmpty &&
+                    value.trim().isNotEmpty) {
+                  filenameController.text =
+                      controller.filenameFromUrl(value.trim());
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Display name')),
+            const SizedBox(height: 10),
+            TextField(
+                controller: filenameController,
+                decoration: const InputDecoration(labelText: 'Filename')),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                    child: TextField(
+                        controller: sizeController,
+                        decoration: const InputDecoration(labelText: 'Size'))),
+                const SizedBox(width: 8),
+                Obx(() => IconButton(
+                      tooltip: 'Detect size',
+                      onPressed: isDetecting.value
+                          ? null
+                          : () async {
+                              final url = urlController.text.trim();
+                              if (url.isEmpty) return;
+                              isDetecting.value = true;
+                              try {
+                                sizeController.text =
+                                    await controller.detectUrlSize(url);
+                              } finally {
+                                isDetecting.value = false;
+                              }
+                            },
+                      icon: isDetecting.value
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Icon(Icons.speed),
+                    )),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+                controller: templateController,
+                decoration: const InputDecoration(labelText: 'Template')),
+            const SizedBox(height: 10),
+            TextField(
+                controller: descriptionController,
+                decoration: const InputDecoration(labelText: 'Description')),
+            const SizedBox(height: 8),
+            Obx(() => SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: isVision.value,
+                  onChanged: (value) => isVision.value = value,
+                  title: Text('Vision model',
+                      style: GoogleFonts.inter(fontSize: 13)),
+                )),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: Get.back, child: const Text('Cancel')),
+        ElevatedButton(
+          onPressed: () async {
+            final url = urlController.text.trim();
+            if (url.isEmpty) return;
+            await controller.addModelFromUrl(
+              name: nameController.text,
+              url: url,
+              filename: filenameController.text,
+              size: sizeController.text,
+              description: descriptionController.text,
+              template: templateController.text,
+              isVision: isVision.value,
+            );
+            Get.back();
+          },
+          child: const Text('Add'),
+        ),
+      ],
+    ));
   }
 
   Widget _buildActiveModelBanner(BuildContext context) {
@@ -88,18 +201,21 @@ class ModelView extends GetView<ModelController> {
           decoration: BoxDecoration(
             color: Theme.of(context).cardColor,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Theme.of(context).dividerColor, width: 0.5),
+            border:
+                Border.all(color: Theme.of(context).dividerColor, width: 0.5),
           ),
           child: Row(
             children: [
-              Icon(Icons.info_outline, color: Theme.of(context).hintColor, size: 20),
+              Icon(Icons.info_outline,
+                  color: Theme.of(context).hintColor, size: 20),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'No model loaded. Download and load a model for local inference.',
                   style: GoogleFonts.inter(
                     fontSize: 13,
-                    color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                    color: Theme.of(context).textTheme.bodyMedium?.color ??
+                        Colors.grey,
                   ),
                 ),
               ),
@@ -130,7 +246,9 @@ class ModelView extends GetView<ModelController> {
               ),
               child: Icon(
                 inference.isGpuAccelerated.value ? Icons.bolt : Icons.memory,
-                color: inference.isGpuAccelerated.value ? AppColors.warning : AppColors.primary,
+                color: inference.isGpuAccelerated.value
+                    ? AppColors.warning
+                    : AppColors.primary,
                 size: 20,
               ),
             ),
@@ -236,7 +354,8 @@ class ModelView extends GetView<ModelController> {
                 value: inference.modelLoadProgress.value > 0
                     ? inference.modelLoadProgress.value
                     : null,
-                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                backgroundColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
                 color: AppColors.secondary,
                 minHeight: 3,
               ),
@@ -332,7 +451,8 @@ class ModelView extends GetView<ModelController> {
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 value: dp.progress.value,
-                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                backgroundColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
                 color: AppColors.primary,
                 minHeight: 4,
               ),
@@ -356,7 +476,8 @@ class ModelView extends GetView<ModelController> {
       final isDownloaded = controller.isDownloaded(model.filename);
       final inference = Get.find<InferenceService>();
       final isActive = inference.loadedModelName.value == model.filename;
-      final isCurrentlyDownloading = controller.isDownloadingModel(model.filename);
+      final isCurrentlyDownloading =
+          controller.isDownloadingModel(model.filename);
 
       return Card(
         margin: const EdgeInsets.only(bottom: 10),
@@ -379,7 +500,8 @@ class ModelView extends GetView<ModelController> {
                                 style: GoogleFonts.inter(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).colorScheme.onSurface,
+                                  color:
+                                      Theme.of(context).colorScheme.onSurface,
                                 ),
                               ),
                             ),
@@ -428,12 +550,14 @@ class ModelView extends GetView<ModelController> {
                           model.description,
                           style: GoogleFonts.inter(
                             fontSize: 12,
-                            color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey,
+                            color:
+                                Theme.of(context).textTheme.bodyMedium?.color ??
+                                    Colors.grey,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          model.size,
+                          controller.modelSizeLabel(model),
                           style: GoogleFonts.inter(
                             fontSize: 11,
                             color: Theme.of(context).hintColor,
@@ -446,55 +570,147 @@ class ModelView extends GetView<ModelController> {
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  if (isDownloaded) ...[
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            isActive ? null : () => controller.loadModel(model.filename),
-                        icon: Icon(
-                          isActive ? Icons.check : Icons.play_arrow,
-                          size: 16,
-                        ),
-                        label: Text(isActive ? 'Active' : 'Load'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor:
-                              isActive ? AppColors.success : AppColors.primary,
-                          side: BorderSide(
-                            color: isActive ? AppColors.success : AppColors.primary,
+              if (isCurrentlyDownloading)
+                _buildInlineDownloadProgress(context, model)
+              else
+                Row(
+                  children: [
+                    if (isDownloaded) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isActive
+                              ? null
+                              : () => controller.loadModel(model.filename),
+                          icon: Icon(
+                            isActive ? Icons.check : Icons.play_arrow,
+                            size: 16,
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                          label: Text(isActive ? 'Active' : 'Load'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: isActive
+                                ? AppColors.success
+                                : AppColors.primary,
+                            side: BorderSide(
+                              color: isActive
+                                  ? AppColors.success
+                                  : AppColors.primary,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: () => controller.deleteModel(model.filename),
-                      icon: const Icon(Icons.delete_outline,
-                          size: 18, color: AppColors.error),
-                    ),
-                  ] else ...[
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: isCurrentlyDownloading
-                            ? null
-                            : () => controller.downloadModel(model),
-                        icon: const Icon(Icons.download, size: 16),
-                        label: Text(isCurrentlyDownloading
-                            ? 'Downloading...'
-                            : 'Download'),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => controller.deleteModel(model.filename),
+                        icon: const Icon(Icons.delete_outline,
+                            size: 18, color: AppColors.error),
                       ),
-                    ),
+                    ] else ...[
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => controller.downloadModel(model),
+                          icon: const Icon(Icons.download, size: 16),
+                          label: const Text('Download'),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
+                ),
               _buildModelLoadingProgress(context, model),
             ],
           ),
         ),
+      );
+    });
+  }
+
+  Widget _buildInlineDownloadProgress(BuildContext context, AiModel model) {
+    final dp = controller.getDownloadProgress(model.filename)!;
+    return Obx(() {
+      final percent = dp.progress.value * 100;
+      final totalLabel = dp.totalBytes.value > 0
+          ? DownloadService.formatBytes(dp.totalBytes.value)
+          : controller.modelSizeLabel(model);
+      final remaining = dp.totalBytes.value <= 0
+          ? 0
+          : (dp.totalBytes.value - dp.downloadedBytes.value)
+              .clamp(0, dp.totalBytes.value);
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: dp.progress.value > 0 ? dp.progress.value : null,
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: AppColors.secondary,
+              minHeight: 5,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Text(
+                '${percent.toStringAsFixed(1)}%',
+                style: GoogleFonts.firaCode(
+                  fontSize: 13,
+                  color: AppColors.secondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.secondary.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  DownloadService.formatSpeed(dp.bytesPerSecond.value),
+                  style: GoogleFonts.firaCode(
+                    fontSize: 12,
+                    color: AppColors.secondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () => controller.pauseDownload(model.filename),
+                icon: const Icon(Icons.close, size: 16),
+                label: const Text('Cancel'),
+                style: TextButton.styleFrom(foregroundColor: AppColors.error),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 14,
+            runSpacing: 4,
+            children: [
+              Text(
+                '${DownloadService.formatBytes(dp.downloadedBytes.value)} / $totalLabel',
+                style: GoogleFonts.inter(
+                    fontSize: 11, color: Theme.of(context).hintColor),
+              ),
+              if (dp.totalBytes.value > 0)
+                Text(
+                  '${DownloadService.formatBytes(remaining)} left',
+                  style: GoogleFonts.inter(
+                      fontSize: 11, color: Theme.of(context).hintColor),
+                ),
+              Text(
+                'ETA: ${DownloadService.formatDuration(dp.eta)}',
+                style: GoogleFonts.inter(
+                    fontSize: 11, color: Theme.of(context).hintColor),
+              ),
+            ],
+          ),
+        ],
       );
     });
   }

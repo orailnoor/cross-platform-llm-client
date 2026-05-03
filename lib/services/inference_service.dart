@@ -1,12 +1,13 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'hive_service.dart';
 import '../core/constants.dart';
 import 'device_info_service.dart';
+import 'app_log_service.dart';
 
 // Conditionally import llama_flutter_android — only on Android
-import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart' as platform;
+import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart'
+    as platform;
 
 /// Cross-platform inference service.
 /// - Android / iOS: uses llama_flutter_android for local GGUF models
@@ -23,6 +24,8 @@ class InferenceService extends GetxService {
   final loadedModelName = ''.obs;
   final tokenCount = 0.obs;
   final tokensPerSecond = 0.0.obs;
+  final contextTokensUsed = 0.obs;
+  final contextTokensTotal = 0.obs;
   final modelLoadProgress = 0.0.obs;
   final generationSource = ''.obs;
   final streamingText = ''.obs;
@@ -57,7 +60,8 @@ class InferenceService extends GetxService {
       final contextSize = _hive.getSetting<int>(
             AppConstants.keyContextSize,
             defaultValue: AppConstants.defaultContextSize,
-          ) ?? AppConstants.defaultContextSize;
+          ) ??
+          AppConstants.defaultContextSize;
 
       final deviceTier = _getDeviceTier();
 
@@ -76,9 +80,12 @@ class InferenceService extends GetxService {
       gpuName.value = result.gpuName;
       gpuLayersUsed.value = result.gpuLayers;
       isGpuAccelerated.value = result.gpuLayers > 0;
+      contextTokensUsed.value = 0;
+      contextTokensTotal.value = contextSize;
 
       await _hive.setSetting(AppConstants.keyLocalModelPath, modelPath);
-      await _hive.setSetting(AppConstants.keyLocalModelName, loadedModelName.value);
+      await _hive.setSetting(
+          AppConstants.keyLocalModelName, loadedModelName.value);
 
       return result.message;
     } catch (e) {
@@ -86,6 +93,7 @@ class InferenceService extends GetxService {
       isLoadingModel.value = false;
       loadingModelName.value = '';
       modelLoadProgress.value = 0.0;
+      Get.find<AppLogService>().error('Failed to load local model', details: e);
       return 'ERROR: Failed to load model — $e';
     }
   }
@@ -101,6 +109,8 @@ class InferenceService extends GetxService {
     gpuLayersUsed.value = 0;
     isGpuAccelerated.value = false;
     gpuName.value = '';
+    contextTokensUsed.value = 0;
+    contextTokensTotal.value = 0;
   }
 
   Future<String> generate({
@@ -139,12 +149,14 @@ class InferenceService extends GetxService {
       final temperature = _hive.getSetting<double>(
             AppConstants.keyTemperature,
             defaultValue: AppConstants.defaultTemperature,
-          ) ?? AppConstants.defaultTemperature;
+          ) ??
+          AppConstants.defaultTemperature;
 
       final maxTokens = _hive.getSetting<int>(
             AppConstants.keyMaxTokens,
             defaultValue: AppConstants.defaultMaxTokens,
-          ) ?? AppConstants.defaultMaxTokens;
+          ) ??
+          AppConstants.defaultMaxTokens;
 
       final result = await _engine!.generate(
         prompt: prompt,
@@ -157,7 +169,8 @@ class InferenceService extends GetxService {
         onToken: (token) {
           tokenCount.value++;
           streamingText.value += token;
-          final elapsedSeconds = DateTime.now().difference(startTime).inMilliseconds / 1000.0;
+          final elapsedSeconds =
+              DateTime.now().difference(startTime).inMilliseconds / 1000.0;
           if (elapsedSeconds > 0) {
             tokensPerSecond.value = tokenCount.value / elapsedSeconds;
           }
@@ -165,6 +178,7 @@ class InferenceService extends GetxService {
         },
       );
 
+      await refreshContextInfo();
       isGenerating.value = false;
       generationSource.value = '';
       return result;
@@ -172,6 +186,7 @@ class InferenceService extends GetxService {
       isGenerating.value = false;
       generationSource.value = '';
       streamingText.value = '';
+      Get.find<AppLogService>().error('Local generation failed', details: e);
       return 'ERROR: $e';
     }
   }
@@ -182,6 +197,19 @@ class InferenceService extends GetxService {
     tokenCount.value = 0;
     generationSource.value = '';
     streamingText.value = '';
+    await refreshContextInfo();
+  }
+
+  Future<void> refreshContextInfo() async {
+    if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
+      return;
+    }
+
+    final info = await _engine!.getContextInfo();
+    if (info == null) return;
+
+    contextTokensUsed.value = info.tokensUsed;
+    contextTokensTotal.value = info.contextSize;
   }
 
   String _getDeviceTier() {

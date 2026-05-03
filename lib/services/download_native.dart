@@ -26,6 +26,27 @@ Future<List<String>> getDownloadedModels(String modelsDir) async {
       .toList();
 }
 
+Future<int> getModelSize(String path) async {
+  final file = File(path);
+  if (!await file.exists()) return 0;
+  return await file.length();
+}
+
+Future<int> getRemoteFileSize(String url, {String? authToken}) async {
+  final headers = <String, dynamic>{};
+  if (authToken != null && authToken.isNotEmpty) {
+    headers['Authorization'] = 'Bearer $authToken';
+  }
+
+  final response = await _dio.head(
+    url,
+    options: Options(headers: headers, followRedirects: true),
+  );
+
+  final length = response.headers.value(Headers.contentLengthHeader);
+  return int.tryParse(length ?? '') ?? 0;
+}
+
 Future<String> downloadModel({
   required String url,
   required String savePath,

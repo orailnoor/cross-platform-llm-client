@@ -5,6 +5,8 @@ class ChatMessage {
   final String content;
   final String? imageBase64; // For multimodal
   final String? imagePath;
+  final String? fileName;
+  final String? fileContent;
   final String? cmdOutput; // Result of CMD: execution
   final bool isCommand;
   final double? tokensPerSec;
@@ -17,6 +19,8 @@ class ChatMessage {
     required this.content,
     this.imageBase64,
     this.imagePath,
+    this.fileName,
+    this.fileContent,
     this.cmdOutput,
     this.isCommand = false,
     this.tokensPerSec,
@@ -30,6 +34,8 @@ class ChatMessage {
         'content': content,
         'imageBase64': imageBase64,
         'imagePath': imagePath,
+        'fileName': fileName,
+        'fileContent': fileContent,
         'cmdOutput': cmdOutput,
         'isCommand': isCommand,
         'tokensPerSec': tokensPerSec,
@@ -43,9 +49,13 @@ class ChatMessage {
         content: map['content'] ?? '',
         imageBase64: map['imageBase64'],
         imagePath: map['imagePath'],
+        fileName: map['fileName'],
+        fileContent: map['fileContent'],
         cmdOutput: map['cmdOutput'],
         isCommand: map['isCommand'] ?? false,
-        tokensPerSec: map['tokensPerSec'] != null ? (map['tokensPerSec'] as num).toDouble() : null,
+        tokensPerSec: map['tokensPerSec'] != null
+            ? (map['tokensPerSec'] as num).toDouble()
+            : null,
         timestamp: DateTime.tryParse(map['timestamp'] ?? '') ?? DateTime.now(),
       );
 }

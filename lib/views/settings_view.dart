@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
+import '../core/constants.dart';
 import '../services/inference_service.dart';
 import '../services/device_info_service.dart';
 
@@ -14,7 +15,8 @@ class SettingsView extends GetView<SettingsController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text('Settings',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
       ),
       body: Obx(() => ListView(
             padding: const EdgeInsets.all(16),
@@ -32,6 +34,9 @@ class SettingsView extends GetView<SettingsController> {
               // ── Inference Mode ──────────────────
               _buildSectionHeader(context, 'INFERENCE MODE'),
               _buildInferenceModeCard(context),
+              const SizedBox(height: 20),
+              _buildSectionHeader(context, 'GLOBAL SYSTEM PROMPT'),
+              _buildSystemPromptCard(context),
               const SizedBox(height: 20),
 
               // ── Cloud API Config ────────────────
@@ -56,7 +61,8 @@ class SettingsView extends GetView<SettingsController> {
                 divisions: 20,
                 safeMax: 1.0,
                 onChanged: (v) => controller.setTemperature(v),
-                warningMessage: 'High temperature = unpredictable, rambling output!',
+                warningMessage:
+                    'High temperature = unpredictable, rambling output!',
                 icon: Icons.thermostat,
               ),
               _buildSmartSlider(
@@ -69,7 +75,8 @@ class SettingsView extends GetView<SettingsController> {
                 safeMax: Get.find<DeviceInfoService>().maxSafeTokens.toDouble(),
                 onChanged: (v) => controller.setMaxTokens(v.toInt()),
                 displayValue: controller.maxTokens.value.toString(),
-                warningMessage: 'Your phone only has ${Get.find<DeviceInfoService>().totalRamGB.value.toStringAsFixed(0)}GB RAM! This WILL crash! 💀',
+                warningMessage:
+                    'Your phone only has ${Get.find<DeviceInfoService>().totalRamGB.value.toStringAsFixed(0)}GB RAM! This WILL crash! 💀',
                 icon: Icons.token,
               ),
               _buildSmartSlider(
@@ -79,15 +86,15 @@ class SettingsView extends GetView<SettingsController> {
                 min: 512,
                 max: 8192,
                 divisions: 15,
-                safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
+                safeMax:
+                    Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
                 onChanged: (v) => controller.setContextSize(v.toInt()),
                 displayValue: controller.contextSize.value.toString(),
-                warningMessage: 'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
+                warningMessage:
+                    'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
                 icon: Icons.memory,
               ),
               const SizedBox(height: 20),
-
-
 
               // ── About ───────────────────────────
               _buildSectionHeader(context, 'ABOUT'),
@@ -104,16 +111,22 @@ class SettingsView extends GetView<SettingsController> {
         padding: const EdgeInsets.all(4),
         child: Column(
           children: [
-            for (final mode in [ThemeMode.light, ThemeMode.dark, ThemeMode.system])
+            for (final mode in [
+              ThemeMode.light,
+              ThemeMode.dark,
+              ThemeMode.system
+            ])
               RadioListTile<ThemeMode>(
                 value: mode,
                 groupValue: controller.themeMode.value,
                 onChanged: (v) => controller.setThemeMode(v!),
                 title: Text(
                   _themeModeName(mode),
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500),
                 ),
-                secondary: Icon(_themeModeIcon(mode), color: AppColors.textMuted),
+                secondary:
+                    Icon(_themeModeIcon(mode), color: AppColors.textMuted),
                 activeColor: AppColors.primary,
                 dense: true,
               ),
@@ -171,14 +184,16 @@ class SettingsView extends GetView<SettingsController> {
               groupValue: controller.inferenceMode.value,
               onChanged: (v) => controller.setInferenceMode(v!),
               title: Text('Local (On-Device)',
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
               subtitle: Obx(() {
                 final inference = Get.find<InferenceService>();
                 return Text(
                   inference.isModelLoaded.value
                       ? 'Active: ${inference.loadedModelName.value}'
                       : 'No model loaded',
-                  style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor),
                 );
               }),
               activeColor: AppColors.primary,
@@ -189,10 +204,12 @@ class SettingsView extends GetView<SettingsController> {
               groupValue: controller.inferenceMode.value,
               onChanged: (v) => controller.setInferenceMode(v!),
               title: Text('Cloud API',
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
               subtitle: Text(
                 controller.cloudProvider.value.toUpperCase(),
-                style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+                style: GoogleFonts.inter(
+                    fontSize: 12, color: Theme.of(context).hintColor),
               ),
               activeColor: AppColors.secondary,
               dense: true,
@@ -209,14 +226,22 @@ class SettingsView extends GetView<SettingsController> {
         padding: const EdgeInsets.all(4),
         child: Column(
           children: [
-            for (final provider in ['kimi', 'openai', 'anthropic', 'google', 'stability'])
+            for (final provider in [
+              'kimi',
+              'openai',
+              'anthropic',
+              'google',
+              'nvidia',
+              'stability'
+            ])
               RadioListTile<String>(
                 value: provider,
                 groupValue: controller.cloudProvider.value,
                 onChanged: (v) => controller.setCloudProvider(v!),
                 title: Text(
                   _providerName(provider),
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500),
                 ),
                 activeColor: AppColors.primary,
                 dense: true,
@@ -239,7 +264,10 @@ class SettingsView extends GetView<SettingsController> {
           children: [
             Text('API Key',
                 style: GoogleFonts.inter(
-                    fontSize: 13, fontWeight: FontWeight.w500, color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey)),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).textTheme.bodyMedium?.color ??
+                        Colors.grey)),
             const SizedBox(height: 8),
             TextField(
               controller: textController,
@@ -281,8 +309,62 @@ class SettingsView extends GetView<SettingsController> {
           children: [
             Text('Model Name',
                 style: GoogleFonts.inter(
-                    fontSize: 13, fontWeight: FontWeight.w500, color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey)),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).textTheme.bodyMedium?.color ??
+                        Colors.grey)),
             const SizedBox(height: 8),
+            if (provider == 'nvidia') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      controller.nvidiaModels.isEmpty
+                          ? 'Fetch available NVIDIA models from your API key.'
+                          : '${controller.nvidiaModels.length} NVIDIA models available',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: Theme.of(context).hintColor,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: controller.isLoadingNvidiaModels.value
+                        ? null
+                        : controller.refreshNvidiaModels,
+                    icon: controller.isLoadingNvidiaModels.value
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 16),
+                    label: const Text('Models'),
+                  ),
+                ],
+              ),
+              if (controller.nvidiaModels.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: controller.nvidiaModels
+                          .contains(controller.nvidiaModel.value)
+                      ? controller.nvidiaModel.value
+                      : null,
+                  items: controller.nvidiaModels
+                      .map((id) => DropdownMenuItem(
+                          value: id,
+                          child: Text(id, overflow: TextOverflow.ellipsis)))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null)
+                      controller.setCloudModel('nvidia', value);
+                  },
+                  decoration:
+                      const InputDecoration(labelText: 'Available models'),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
             TextField(
               controller: textController,
               style: GoogleFonts.firaCode(fontSize: 13),
@@ -303,6 +385,43 @@ class SettingsView extends GetView<SettingsController> {
               onChanged: (v) {
                 controller.debouncedSetCloudModel(provider, v);
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSystemPromptCard(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Applies to local and cloud models',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: Theme.of(context).hintColor,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller.globalSystemPromptController,
+              minLines: 3,
+              maxLines: 6,
+              style: GoogleFonts.inter(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: AppConstants.systemPrompt,
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.save, size: 18),
+                  onPressed: () => controller.setGlobalSystemPrompt(
+                    controller.globalSystemPromptController.text,
+                  ),
+                ),
+              ),
+              onSubmitted: (value) => controller.setGlobalSystemPrompt(value),
             ),
           ],
         ),
@@ -429,7 +548,8 @@ class SettingsView extends GetView<SettingsController> {
                         fontSize: 13, fontWeight: FontWeight.w500)),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: sliderColor.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -467,10 +587,10 @@ class SettingsView extends GetView<SettingsController> {
                 if (v > safeMax && value <= safeMax) {
                   // Entering danger zone — heavy vibration
                   HapticFeedback.heavyImpact();
-                  Future.delayed(const Duration(milliseconds: 100), () =>
-                      HapticFeedback.heavyImpact());
-                  Future.delayed(const Duration(milliseconds: 200), () =>
-                      HapticFeedback.heavyImpact());
+                  Future.delayed(const Duration(milliseconds: 100),
+                      () => HapticFeedback.heavyImpact());
+                  Future.delayed(const Duration(milliseconds: 200),
+                      () => HapticFeedback.heavyImpact());
                   Get.snackbar(
                     '⚠️ DANGER ZONE',
                     warningMessage,
@@ -490,13 +610,15 @@ class SettingsView extends GetView<SettingsController> {
                 onChanged(v);
               },
               activeColor: sliderColor,
-              inactiveColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              inactiveColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
             // Danger warning banner
             if (isOverLimit)
               Container(
                 margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: sliderColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(6),
@@ -526,9 +648,6 @@ class SettingsView extends GetView<SettingsController> {
     );
   }
 
-
-
-
   Widget _buildAboutCard(BuildContext context) {
     return Card(
       child: Padding(
@@ -547,7 +666,8 @@ class SettingsView extends GetView<SettingsController> {
             const SizedBox(height: 4),
             Text(
               'Intelligent AI Assistant\nv1.0.0 · by orailnoor',
-              style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+              style: GoogleFonts.inter(
+                  fontSize: 12, color: Theme.of(context).hintColor),
             ),
           ],
         ),
@@ -567,6 +687,8 @@ class SettingsView extends GetView<SettingsController> {
         return 'Kimi (Moonshot)';
       case 'stability':
         return 'Stability AI (Image Gen)';
+      case 'nvidia':
+        return 'NVIDIA NIM';
       default:
         return key;
     }

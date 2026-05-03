@@ -12,6 +12,9 @@ class ChatBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
+    final visibleContent = message.fileName == null
+        ? message.content
+        : message.content.split('\n\nAttached file:').first;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -55,13 +58,46 @@ class ChatBubble extends StatelessWidget {
 
             // Message content
             SelectableText(
-              message.content,
+              visibleContent,
               style: GoogleFonts.inter(
                 fontSize: 14,
                 color: Theme.of(context).colorScheme.onSurface,
                 height: 1.4,
               ),
             ),
+            if (message.fileName != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withOpacity(0.55),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.description_outlined,
+                        size: 16, color: Theme.of(context).hintColor),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        message.fileName!,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             // Timestamp and Speed
             const SizedBox(height: 6),

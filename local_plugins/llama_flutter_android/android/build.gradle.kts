@@ -65,15 +65,16 @@ android {
                 cppFlags += listOf(
                     "-std=c++17",
                     "-O3",
-                    "-fvisibility=hidden",
-                    "-Wl,-z,max-page-size=16384"
+                    "-fvisibility=hidden"
                 )
                 
                 // ARM64 optimization flags
                 arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
                     "-DANDROID_ARM_NEON=ON",
                     "-DGGML_CPU_AARCH64=ON",
-                    "-DGGML_DOTPROD=ON"
+                    "-DGGML_DOTPROD=ON",
+                    "-DGGML_OPENMP=OFF"
                 )
             }
         }

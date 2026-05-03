@@ -9,17 +9,21 @@ class AppConstants {
 
   // Settings Keys
   static const String keyInferenceMode = 'inference_mode'; // 'local' or 'cloud'
-  static const String keyCloudProvider = 'cloud_provider'; // 'openai', 'anthropic', 'google', 'kimi'
+  static const String keyCloudProvider =
+      'cloud_provider'; // 'openai', 'anthropic', 'google', 'kimi'
   static const String keyOpenaiKey = 'openai_api_key';
   static const String keyAnthropicKey = 'anthropic_api_key';
   static const String keyGoogleKey = 'google_api_key';
   static const String keyKimiKey = 'kimi_api_key';
   static const String keyStabilityKey = 'stability_api_key';
+  static const String keyNvidiaKey = 'nvidia_api_key';
   static const String keyOpenaiModel = 'openai_model';
   static const String keyAnthropicModel = 'anthropic_model';
   static const String keyGoogleModel = 'google_model';
   static const String keyKimiModel = 'kimi_model';
   static const String keyStabilityModel = 'stability_model';
+  static const String keyNvidiaModel = 'nvidia_model';
+  static const String keyGlobalSystemPrompt = 'global_system_prompt';
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
   static const String keyTemperature = 'temperature';
@@ -162,9 +166,15 @@ class AppConstants {
   ];
 
   // Cloud API Endpoints
-  static const String openaiEndpoint = 'https://api.openai.com/v1/chat/completions';
-  static const String anthropicEndpoint = 'https://api.anthropic.com/v1/messages';
-  static const String googleEndpoint = 'https://generativelanguage.googleapis.com/v1beta/models';
-  static const String kimiEndpoint = 'https://api.moonshot.ai/v1/chat/completions';
-  static const String stabilityEndpoint = 'https://api.stability.ai/v2beta/stable-image/generate/sd3';
+  static const String openaiEndpoint =
+      'https://api.openai.com/v1/chat/completions';
+  static const String anthropicEndpoint =
+      'https://api.anthropic.com/v1/messages';
+  static const String googleEndpoint =
+      'https://generativelanguage.googleapis.com/v1beta/models';
+  static const String kimiEndpoint =
+      'https://api.moonshot.ai/v1/chat/completions';
+  static const String stabilityEndpoint =
+      'https://api.stability.ai/v2beta/stable-image/generate/sd3';
+  static const String nvidiaEndpoint = 'https://integrate.api.nvidia.com/v1';
 }

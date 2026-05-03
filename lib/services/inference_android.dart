@@ -57,7 +57,8 @@ class InferenceEngine {
           print('[Inference] ✓ Upper-mid GPU ($gpuNum) → $gpuLayers layers');
         } else {
           gpuLayers = 0;
-          print('[Inference] Mid-range GPU ($gpuNum) — CPU is faster, skipping GPU');
+          print(
+              '[Inference] Mid-range GPU ($gpuNum) — CPU is faster, skipping GPU');
         }
       }
     } catch (e) {
@@ -67,14 +68,19 @@ class InferenceEngine {
     // ── Thread Tuning ──
     int threads;
     if (gpuLayers > 0) {
-      threads = deviceTier == 'ultra' ? 4
-          : deviceTier == 'high' ? 4
-          : 4;
+      threads = deviceTier == 'ultra'
+          ? 4
+          : deviceTier == 'high'
+              ? 4
+              : 4;
     } else {
-      threads = deviceTier == 'ultra' ? 6
-          : deviceTier == 'high' ? 5
-          : deviceTier == 'mid' ? 4
-          : 3;
+      threads = deviceTier == 'ultra'
+          ? 6
+          : deviceTier == 'high'
+              ? 5
+              : deviceTier == 'mid'
+                  ? 4
+                  : 3;
     }
 
     // ── Load Progress ──
@@ -138,7 +144,9 @@ class InferenceEngine {
     // ── Use generateChat() for native template handling ──
     Stream<String>? stream;
     try {
-      final messages = _buildChatMessages(prompt, conversationHistory, systemPrompt, imagePath: imagePath);
+      final messages = _buildChatMessages(
+          prompt, conversationHistory, systemPrompt,
+          imagePath: imagePath);
       stream = _controller!.generateChat(
         messages: messages,
         template: null,
@@ -153,9 +161,12 @@ class InferenceEngine {
       print('[Inference] generateChat() started (${messages.length} messages)');
     } catch (e) {
       print('[Inference] generateChat() failed: $e — fallback to generate()');
-      try { await _controller!.stop(); } catch (_) {}
+      try {
+        await _controller!.stop();
+      } catch (_) {}
       await Future.delayed(const Duration(milliseconds: 100));
-      final fullPrompt = _buildPrompt(prompt, conversationHistory, systemPrompt, modelName);
+      final fullPrompt =
+          _buildPrompt(prompt, conversationHistory, systemPrompt, modelName);
       stream = _controller!.generate(
         prompt: fullPrompt,
         maxTokens: maxTokens,
@@ -169,7 +180,7 @@ class InferenceEngine {
     }
 
     int tokenCount = 0;
-    _subscription = stream!.listen(
+    _subscription = stream.listen(
       (token) {
         if (tokenCount == 0) {
           print('[Inference] ✓ FIRST TOKEN received! Prefill done.');
@@ -196,7 +207,8 @@ class InferenceEngine {
     // Prefill timeout
     _idleTimer = Timer(const Duration(seconds: 60), () {
       if (tokenCount == 0) {
-        finish('ERROR: Model did not respond. Try a smaller model or shorter conversation.');
+        finish(
+            'ERROR: Model did not respond. Try a smaller model or shorter conversation.');
       }
     });
 
@@ -214,13 +226,25 @@ class InferenceEngine {
   Future<void> stop() async {
     _idleTimer?.cancel();
     _subscription?.cancel();
-    try { await _controller?.stop(); } catch (_) {}
+    try {
+      await _controller?.stop();
+    } catch (_) {}
     _onStop?.call();
+  }
+
+  Future<ContextInfo?> getContextInfo() async {
+    try {
+      return await _controller?.getContextInfo();
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> dispose() async {
     await stop();
-    try { await _controller?.dispose(); } catch (_) {}
+    try {
+      await _controller?.dispose();
+    } catch (_) {}
     _controller = null;
   }
 
@@ -251,11 +275,13 @@ class InferenceEngine {
       }
       for (final msg in recent) {
         final content = msg['content'] ?? '';
-        messages.add(ChatMessage(role: msg['role'] ?? 'user', content: content));
+        messages
+            .add(ChatMessage(role: msg['role'] ?? 'user', content: content));
       }
     }
 
-    messages.add(ChatMessage(role: 'user', content: prompt, imagePath: imagePath));
+    messages
+        .add(ChatMessage(role: 'user', content: prompt, imagePath: imagePath));
     return messages;
   }
 
@@ -267,19 +293,26 @@ class InferenceEngine {
   ) {
     // Auto-detect template from model name
     final name = modelName.toLowerCase();
-    if (name.contains('gemma')) return _buildGemma(userMessage, history, systemPrompt);
-    if (name.contains('llama-3') || name.contains('llama3')) return _buildLlama3(userMessage, history, systemPrompt);
+    if (name.contains('gemma')) {
+      return _buildGemma(userMessage, history, systemPrompt);
+    }
+    if (name.contains('llama-3') || name.contains('llama3')) {
+      return _buildLlama3(userMessage, history, systemPrompt);
+    }
     return _buildChatML(userMessage, history, systemPrompt);
   }
 
-  String _buildChatML(String msg, List<Map<String, String>>? history, String sys) {
+  String _buildChatML(
+      String msg, List<Map<String, String>>? history, String sys) {
     final buf = StringBuffer();
     buf.write('<|im_start|>system\n$sys<|im_end|>\n');
     if (history != null) {
-      final recent = history.length > 8 ? history.sublist(history.length - 8) : history;
+      final recent =
+          history.length > 8 ? history.sublist(history.length - 8) : history;
       for (final m in recent) {
         final content = m['content'] ?? '';
-        final trunc = content.length > 300 ? '${content.substring(0, 300)}...' : content;
+        final trunc =
+            content.length > 300 ? '${content.substring(0, 300)}...' : content;
         buf.write('<|im_start|>${m['role'] ?? 'user'}\n$trunc<|im_end|>\n');
       }
     }
@@ -287,15 +320,19 @@ class InferenceEngine {
     return buf.toString();
   }
 
-  String _buildGemma(String msg, List<Map<String, String>>? history, String sys) {
+  String _buildGemma(
+      String msg, List<Map<String, String>>? history, String sys) {
     final buf = StringBuffer();
-    buf.write('<start_of_turn>user\n$sys<end_of_turn>\n<start_of_turn>model\nUnderstood.<end_of_turn>\n');
+    buf.write(
+        '<start_of_turn>user\n$sys<end_of_turn>\n<start_of_turn>model\nUnderstood.<end_of_turn>\n');
     if (history != null) {
-      final recent = history.length > 4 ? history.sublist(history.length - 4) : history;
+      final recent =
+          history.length > 4 ? history.sublist(history.length - 4) : history;
       for (final m in recent) {
         final role = m['role'] == 'assistant' ? 'model' : 'user';
         final content = m['content'] ?? '';
-        final trunc = content.length > 300 ? '${content.substring(0, 300)}...' : content;
+        final trunc =
+            content.length > 300 ? '${content.substring(0, 300)}...' : content;
         buf.write('<start_of_turn>$role\n$trunc<end_of_turn>\n');
       }
     }
@@ -303,18 +340,24 @@ class InferenceEngine {
     return buf.toString();
   }
 
-  String _buildLlama3(String msg, List<Map<String, String>>? history, String sys) {
+  String _buildLlama3(
+      String msg, List<Map<String, String>>? history, String sys) {
     final buf = StringBuffer();
-    buf.write('<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n$sys<|eot_id|>');
+    buf.write(
+        '<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n$sys<|eot_id|>');
     if (history != null) {
-      final recent = history.length > 4 ? history.sublist(history.length - 4) : history;
+      final recent =
+          history.length > 4 ? history.sublist(history.length - 4) : history;
       for (final m in recent) {
         final content = m['content'] ?? '';
-        final trunc = content.length > 300 ? '${content.substring(0, 300)}...' : content;
-        buf.write('<|start_header_id|>${m['role'] ?? 'user'}<|end_header_id|>\n\n$trunc<|eot_id|>');
+        final trunc =
+            content.length > 300 ? '${content.substring(0, 300)}...' : content;
+        buf.write(
+            '<|start_header_id|>${m['role'] ?? 'user'}<|end_header_id|>\n\n$trunc<|eot_id|>');
       }
     }
-    buf.write('<|start_header_id|>user<|end_header_id|>\n\n$msg<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n');
+    buf.write(
+        '<|start_header_id|>user<|end_header_id|>\n\n$msg<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n');
     return buf.toString();
   }
 }

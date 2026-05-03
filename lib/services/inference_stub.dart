@@ -43,5 +43,6 @@ class InferenceEngine {
   }
 
   Future<void> stop() async {}
+  Future<dynamic> getContextInfo() async => null;
   Future<void> dispose() async {}
 }
