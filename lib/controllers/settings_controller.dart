@@ -228,6 +228,27 @@ class SettingsController extends GetxController {
     }
   }
 
+  String get selectedCloudModelName {
+    switch (cloudProvider.value) {
+      case 'anthropic':
+        return anthropicModel.value;
+      case 'google':
+        return googleModel.value;
+      case 'kimi':
+        return kimiModel.value;
+      case 'stability':
+        return stabilityModel.value;
+      case 'nvidia':
+        return nvidiaModel.value;
+      case 'openrouter':
+        return openRouterModel.value;
+      case 'custom':
+        return customCloudModel.value;
+      default:
+        return openaiModel.value;
+    }
+  }
+
   Future<void> setInferenceMode(String mode) async {
     inferenceMode.value = mode;
     await _hive.setSetting(AppConstants.keyInferenceMode, mode);
@@ -376,6 +397,17 @@ class SettingsController extends GetxController {
     globalSystemPrompt.value = normalized;
     globalSystemPromptController.text = normalized;
     await _hive.setSetting(AppConstants.keyGlobalSystemPrompt, normalized);
+  }
+
+  String effectiveSystemPromptForModel(String modelName) {
+    final prompt = globalSystemPrompt.value.trim();
+    final hasCustomPrompt =
+        prompt.isNotEmpty && prompt != AppConstants.systemPrompt;
+    if (hasCustomPrompt) return prompt;
+    if (AppConstants.isUncensoredModelName(modelName)) {
+      return AppConstants.uncensoredSystemPrompt;
+    }
+    return AppConstants.systemPrompt;
   }
 
   Future<void> refreshNvidiaModels() async {

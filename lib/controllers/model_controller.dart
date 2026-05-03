@@ -134,12 +134,15 @@ class ModelController extends GetxController {
     for (final file in files) {
       if (!existingFilenames.contains(file)) {
         final lower = file.toLowerCase();
-        final isVision = lower.contains('vl-') ||
-            lower.contains('llava') ||
-            lower.contains('vision') ||
-            lower.contains('-vl') ||
-            lower.contains('gemma-4') ||
-            lower.contains('gemma4');
+        final runtime = AiModel.runtimeFromFilename(file);
+        final isLiteRt = runtime == AiModel.runtimeLiteRt;
+        final isVision = isLiteRt &&
+            (lower.contains('vl-') ||
+                lower.contains('llava') ||
+                lower.contains('vision') ||
+                lower.contains('-vl') ||
+                lower.contains('gemma-4') ||
+                lower.contains('gemma4'));
 
         availableModels.add(AiModel(
           name: file,
@@ -147,10 +150,8 @@ class ModelController extends GetxController {
           url: '',
           size: _formatModelSize(file),
           description: 'Imported from local storage',
-          template: AiModel.runtimeFromFilename(file) == AiModel.runtimeLiteRt
-              ? 'litert'
-              : 'chatml',
-          runtime: AiModel.runtimeFromFilename(file),
+          template: isLiteRt ? 'litert' : 'chatml',
+          runtime: runtime,
           isImported: true,
           isVision: isVision,
         ));
@@ -189,6 +190,7 @@ class ModelController extends GetxController {
   }
 
   bool isVisionModel(AiModel model) {
+    if (!isLiteRtModel(model)) return false;
     final lower =
         '${model.name} ${model.filename} ${model.description}'.toLowerCase();
     return model.isVision ||
@@ -201,11 +203,9 @@ class ModelController extends GetxController {
   }
 
   bool isUncensoredModel(AiModel model) {
-    final lower =
-        '${model.name} ${model.filename} ${model.description}'.toLowerCase();
-    return lower.contains('uncensored') ||
-        lower.contains('abliterated') ||
-        lower.contains('unrestricted');
+    return AppConstants.isUncensoredModelName(
+      '${model.name} ${model.filename} ${model.description}',
+    );
   }
 
   bool isImageModel(AiModel model) {
@@ -305,7 +305,12 @@ class ModelController extends GetxController {
         resolvedFilename,
         template: template.trim().isEmpty ? 'chatml' : template.trim(),
       ),
-      isVision: isVision,
+      isVision: isVision &&
+          AiModel.runtimeFromFilename(
+            resolvedFilename,
+            template: template.trim().isEmpty ? 'chatml' : template.trim(),
+          ) ==
+              AiModel.runtimeLiteRt,
       isCustom: true,
     );
 
@@ -429,7 +434,8 @@ class ModelController extends GetxController {
         modelRuntime: model?.runtime,
       );
       if (_inference.isModelLoaded.value) {
-        _inference.isVisionLoaded.value = model?.isVision ?? false;
+        _inference.isVisionLoaded.value =
+            model == null ? false : isVisionModel(model);
         await _settings.setInferenceMode('local');
       }
       Get.snackbar('Text Model', result, snackPosition: SnackPosition.BOTTOM);
@@ -448,7 +454,7 @@ class ModelController extends GetxController {
         content: Text(
           'You already used $currentLabel in this app session. '
           'Switching to $targetLabel without restarting can crash the native runtime.\n\n'
-          'Please close and reopen the app, then load this model.',
+          'Restart the app, then load this model.',
         ),
         actions: [
           TextButton(
@@ -456,11 +462,15 @@ class ModelController extends GetxController {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Get.back();
-              SystemNavigator.pop();
+              try {
+                await _androidImportChannel.invokeMethod('restartApp');
+              } catch (_) {
+                SystemNavigator.pop();
+              }
             },
-            child: const Text('Close app'),
+            child: const Text('Restart app'),
           ),
         ],
       ),
@@ -540,7 +550,7 @@ class ModelController extends GetxController {
 
     final result = await Get.dialog<_ModelLoadAction>(
       AlertDialog(
-        title: Text(isCriticallyLow ? 'Low RAM warning' : 'Load model?'),
+        title: Text(isCriticallyLow ? 'Restart recommended' : 'Load model?'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -573,6 +583,18 @@ class ModelController extends GetxController {
             TextButton(
               onPressed: () => Get.back(result: _ModelLoadAction.unload),
               child: const Text('Unload'),
+            ),
+          if (isCriticallyLow)
+            TextButton(
+              onPressed: () async {
+                Get.back(result: _ModelLoadAction.cancel);
+                try {
+                  await _androidImportChannel.invokeMethod('restartApp');
+                } catch (_) {
+                  SystemNavigator.pop();
+                }
+              },
+              child: const Text('Restart app'),
             ),
           ElevatedButton(
             onPressed: () async {

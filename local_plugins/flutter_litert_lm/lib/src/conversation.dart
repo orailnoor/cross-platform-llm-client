@@ -47,6 +47,22 @@ class LiteLmConversation {
     return LiteLmMessage.fromMap(result);
   }
 
+  /// Send multimodal contents (text + images + audio) and stream back partial
+  /// responses as tokens are generated.
+  Stream<LiteLmMessage> sendMultimodalMessageStream(
+    List<LiteLmContent> contents, {
+    Map<String, Object>? extraContext,
+  }) {
+    _ensureNotDisposed();
+    return FlutterLitertLmPlatform.instance
+        .sendMessageStream(
+          _id,
+          contents.map((c) => c.toMap()).toList(),
+          extraContext,
+        )
+        .map((map) => LiteLmMessage.fromMap(map));
+  }
+
   /// Send a text message and stream back partial responses as tokens are generated.
   Stream<LiteLmMessage> sendMessageStream(
     String text, {

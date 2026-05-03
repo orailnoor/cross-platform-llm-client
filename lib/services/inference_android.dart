@@ -393,23 +393,66 @@ class InferenceEngine {
 
     if ((imagePath != null && imagePath.isNotEmpty) ||
         (audioPath != null && audioPath.isNotEmpty)) {
-      try {
-        final contents = <LiteLmContent>[
-          LiteLmContent.text(prompt),
-          if (imagePath != null && imagePath.isNotEmpty)
-            LiteLmContent.imageFile(imagePath),
-          if (audioPath != null && audioPath.isNotEmpty)
-            LiteLmContent.audioFile(audioPath),
-        ];
-        final response =
-            await _liteConversation!.sendMultimodalMessage(contents);
-        final text = _cleanLiteRtChunk(response.text);
-        _liteConversationHasMessages = true;
-        if (text.isNotEmpty) onToken?.call(text);
-        return text;
-      } catch (error) {
-        return 'ERROR: LiteRT-LM multimodal input failed - $error';
-      }
+      final contents = <LiteLmContent>[
+        LiteLmContent.text(prompt),
+        if (imagePath != null && imagePath.isNotEmpty)
+          LiteLmContent.imageFile(imagePath),
+        if (audioPath != null && audioPath.isNotEmpty)
+          LiteLmContent.audioFile(audioPath),
+      ];
+
+      _subscription =
+          _liteConversation!.sendMultimodalMessageStream(contents).listen(
+        (delta) {
+          var text = _cleanLiteRtChunk(delta.text);
+          if (text.isEmpty) return;
+
+          if (!hasVisibleOutput) {
+            if (!_hasPrintableText(text)) return;
+            text = text.trimLeft();
+            hasVisibleOutput = true;
+          }
+
+          if (tokenCount == 0) {
+            print('[Inference] LiteRT-LM multimodal FIRST TOKEN received');
+          }
+          _liteConversationHasMessages = true;
+          tokenCount++;
+          buffer.write(text);
+          onToken?.call(text);
+          _idleTimer?.cancel();
+          _idleTimer = Timer(const Duration(seconds: 8), () {
+            print('[Inference] LiteRT-LM multimodal idle timeout - $tokenCount chunks');
+            finish(buffer.toString());
+          });
+        },
+        onDone: () {
+          _liteConversationHasMessages = true;
+          print('[Inference] LiteRT-LM multimodal stream done - $tokenCount chunks');
+          finish(buffer.toString());
+        },
+        onError: (error) {
+          print('[Inference] LiteRT-LM multimodal stream error: $error');
+          finish('ERROR: LiteRT-LM multimodal generation failed - $error');
+        },
+      );
+
+      _idleTimer = Timer(const Duration(seconds: 90), () {
+        if (tokenCount == 0) {
+          finish('ERROR: LiteRT-LM multimodal model did not respond.');
+        }
+      });
+
+      Future.delayed(const Duration(seconds: 240), () {
+        if (!completed) {
+          final partial = buffer.toString();
+          finish(partial.isEmpty
+              ? 'ERROR: LiteRT-LM multimodal generation timed out.'
+              : partial);
+        }
+      });
+
+      return completer.future;
     }
 
     _subscription = _liteConversation!.sendMessageStream(prompt).listen(

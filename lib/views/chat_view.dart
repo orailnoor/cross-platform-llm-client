@@ -150,18 +150,31 @@ class ChatView extends GetView<ChatController> {
               final streamText = controller.streamingResponse.value;
               final msgCount = controller.messages.length;
 
-              return ListView.builder(
-                controller: controller.scrollController,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                itemCount: msgCount + (isStreaming ? 1 : 0),
-                itemBuilder: (context, index) {
-                  // Streaming bubble at the end
-                  if (index == msgCount && isStreaming) {
-                    return _buildStreamingBubble(context, streamText);
+              return NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notification) {
+                  if (notification.dragDetails != null && isStreaming) {
+                    final delta = notification.scrollDelta ?? 0;
+                    if (delta < 0) {
+                      controller.pauseStreamingFollow();
+                    } else {
+                      controller.resumeStreamingFollowIfNearBottom();
+                    }
                   }
-                  return ChatBubble(message: controller.messages[index]);
+                  return false;
                 },
+                child: ListView.builder(
+                  controller: controller.scrollController,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: msgCount + (isStreaming ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    // Streaming bubble at the end
+                    if (index == msgCount && isStreaming) {
+                      return _buildStreamingBubble(context, streamText);
+                    }
+                    return ChatBubble(message: controller.messages[index]);
+                  },
+                ),
               );
             }),
           ),
@@ -175,6 +188,7 @@ class ChatView extends GetView<ChatController> {
 
   /// Real-time streaming bubble — shows AI response as it generates token-by-token.
   Widget _buildStreamingBubble(BuildContext context, String text) {
+    final attachmentType = controller.streamingAttachmentType.value;
     final visibleText = _cleanStreamingText(text).trimLeft();
     final thoughtParts = splitThoughtTags(visibleText);
     final answerText = thoughtParts.answer.trimLeft();
@@ -204,7 +218,7 @@ class ChatView extends GetView<ChatController> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             !hasVisibleText
-                ? _buildTypingIndicator(context)
+                ? _buildTypingIndicator(context, attachmentType: attachmentType)
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -257,8 +271,36 @@ class ChatView extends GetView<ChatController> {
   }
 
   /// Animated typing dots — shown only during prefill (before first token).
-  Widget _buildTypingIndicator(BuildContext context) {
-    return const _TypingDots();
+  Widget _buildTypingIndicator(
+    BuildContext context, {
+    String? attachmentType,
+  }) {
+    final message = attachmentType == 'image'
+        ? 'Reading image. This may take a few seconds...'
+        : attachmentType == 'audio'
+            ? 'Listening to audio. This may take a few seconds...'
+            : null;
+
+    if (message == null) return const _TypingDots();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _TypingDots(),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            message,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              height: 1.25,
+              color: Theme.of(context).hintColor,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   MarkdownStyleSheet _streamingMarkdownStyle(BuildContext context) {
@@ -575,7 +617,9 @@ class ChatView extends GetView<ChatController> {
                   final settings = Get.find<SettingsController>();
                   final inference = Get.find<InferenceService>();
                   final isLocal = settings.inferenceMode.value == 'local';
-                  final showPicker = !isLocal || inference.isVisionLoaded.value;
+                  final showPicker = isLocal &&
+                      inference.loadedModelRuntime.value == 'litert' &&
+                      inference.isVisionLoaded.value;
 
                   if (!showPicker) return const SizedBox.shrink();
 
@@ -590,16 +634,26 @@ class ChatView extends GetView<ChatController> {
                     constraints: const BoxConstraints(),
                   );
                 }),
-                IconButton(
-                  icon: Icon(
-                    Icons.attach_file,
-                    color: Theme.of(context).hintColor,
-                    size: 22,
-                  ),
-                  onPressed: controller.pickFile,
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                ),
+                Obx(() {
+                  final settings = Get.find<SettingsController>();
+                  final inference = Get.find<InferenceService>();
+                  final canAttach = settings.inferenceMode.value == 'local' &&
+                      inference.loadedModelRuntime.value == 'litert' &&
+                      inference.isVisionLoaded.value;
+
+                  if (!canAttach) return const SizedBox.shrink();
+
+                  return IconButton(
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: Theme.of(context).hintColor,
+                      size: 22,
+                    ),
+                    onPressed: controller.pickFile,
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
+                  );
+                }),
                 // Text field
                 Expanded(
                   child: TextField(

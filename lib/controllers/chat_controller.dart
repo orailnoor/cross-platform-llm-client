@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
@@ -17,6 +20,30 @@ import '../services/cloud_service.dart';
 import '../services/local_image_service.dart';
 import '../services/app_log_service.dart';
 import '../utils/thought_parser.dart';
+
+const int _visionImageMaxSide = 768;
+const int _visionImageJpegQuality = 72;
+
+Uint8List? _resizeVisionImageBytes(Map<String, dynamic> args) {
+  final bytes = args['bytes'] as Uint8List;
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return null;
+
+  final longestSide = decoded.width > decoded.height ? decoded.width : decoded.height;
+  if (longestSide <= _visionImageMaxSide) {
+    return bytes;
+  }
+
+  final resized = img.copyResize(
+    decoded,
+    width: decoded.width >= decoded.height ? _visionImageMaxSide : null,
+    height: decoded.height > decoded.width ? _visionImageMaxSide : null,
+    interpolation: img.Interpolation.average,
+  );
+  return Uint8List.fromList(
+    img.encodeJpg(resized, quality: _visionImageJpegQuality),
+  );
+}
 
 class ChatController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -39,6 +66,7 @@ class ChatController extends GetxController {
   // Real-time streaming state — the AI response as it's being generated
   final streamingResponse = ''.obs;
   final isStreaming = false.obs;
+  final streamingAttachmentType = Rxn<String>();
 
   final textController = TextEditingController();
   final scrollController = ScrollController();
@@ -109,18 +137,17 @@ class ChatController extends GetxController {
     final picker = ImagePicker();
     final file = await picker.pickImage(
       source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 80,
+      maxWidth: _visionImageMaxSide.toDouble(),
+      maxHeight: _visionImageMaxSide.toDouble(),
+      imageQuality: _visionImageJpegQuality,
     );
     if (file != null) {
       selectedImagePath.value = file.path;
-      final bytes = await file.readAsBytes();
-      selectedImageBase64.value = base64Encode(bytes);
+      selectedImageBase64.value = null;
       selectedFileName.value = file.name;
       selectedFilePath.value = file.path;
       selectedFileType.value = 'image';
-      selectedFileSize.value = bytes.length;
+      selectedFileSize.value = await file.length();
       selectedFileContent.value = null;
     }
   }
@@ -172,28 +199,40 @@ class ChatController extends GetxController {
       final file = result.files.single;
       final extension = file.extension?.toLowerCase() ?? '';
       final fileType = _attachmentTypeForExtension(extension);
-      final bytes = file.bytes ??
-          (file.path != null ? await File(file.path!).readAsBytes() : null);
-      if (bytes == null) {
+      if (fileType == 'image') {
+        final bytes = file.bytes ??
+            (file.path != null ? await File(file.path!).readAsBytes() : null);
+        if (bytes == null) return;
+        final optimizedPath = await _prepareVisionImagePath(
+          bytes: bytes,
+          originalName: file.name,
+          fallbackPath: file.path,
+        );
+
+        selectedFileName.value = file.name;
+        selectedFilePath.value = optimizedPath;
+        selectedFileType.value = 'image';
+        selectedFileSize.value = await File(optimizedPath).length();
+        selectedFileContent.value = null;
+        selectedImagePath.value = optimizedPath;
+        selectedImageBase64.value = null;
         return;
       }
 
       selectedFileName.value = file.name;
       selectedFilePath.value = file.path;
       selectedFileType.value = fileType;
-      selectedFileSize.value = file.size > 0 ? file.size : bytes.length;
+      selectedFileSize.value = file.size;
       selectedFileContent.value = null;
-
-      if (fileType == 'image') {
-        selectedImagePath.value = file.path;
-        selectedImageBase64.value = base64Encode(bytes);
-        return;
-      }
 
       selectedImagePath.value = null;
       selectedImageBase64.value = null;
 
       if (fileType == 'text') {
+        final bytes = file.bytes ??
+            (file.path != null ? await File(file.path!).readAsBytes() : null);
+        if (bytes == null) return;
+        selectedFileSize.value = file.size > 0 ? file.size : bytes.length;
         var content = utf8.decode(bytes, allowMalformed: true);
         if (content.length > 12000) {
           content =
@@ -214,6 +253,36 @@ class ChatController extends GetxController {
     selectedFilePath.value = null;
     selectedFileType.value = null;
     selectedFileSize.value = 0;
+  }
+
+  Future<String> _prepareVisionImagePath({
+    required Uint8List bytes,
+    required String originalName,
+    String? fallbackPath,
+  }) async {
+    final resized = await compute(_resizeVisionImageBytes, {'bytes': bytes});
+    if (resized == null) {
+      if (fallbackPath != null && fallbackPath.isNotEmpty) return fallbackPath;
+      final tempDir = await getTemporaryDirectory();
+      final failedDecodeFile = File(
+        '${tempDir.path}/ai_chat_image_${DateTime.now().millisecondsSinceEpoch}_$originalName',
+      );
+      await failedDecodeFile.writeAsBytes(bytes, flush: false);
+      return failedDecodeFile.path;
+    }
+
+    if (resized.length == bytes.length &&
+        fallbackPath != null &&
+        fallbackPath.isNotEmpty) {
+      return fallbackPath;
+    }
+
+    final tempDir = await getTemporaryDirectory();
+    final file = File(
+      '${tempDir.path}/ai_chat_vision_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
+    await file.writeAsBytes(resized, flush: false);
+    return file.path;
   }
 
   // ─── Send Message ───────────────────────────────
@@ -285,6 +354,8 @@ class ChatController extends GetxController {
     final generationId = ++_generationSerial;
     isLoading.value = true;
     isStreaming.value = true;
+    streamingAttachmentType.value =
+        (imagePath != null || fileType == 'audio') ? fileType : null;
     streamingResponse.value = '';
     _followStreaming = true;
     _scrollToBottom(force: true);
@@ -395,6 +466,7 @@ class ChatController extends GetxController {
           ? Get.find<InferenceService>().tokensPerSecond.value
           : null;
       isStreaming.value = false;
+      streamingAttachmentType.value = null;
       streamingResponse.value = '';
 
       String? outImageBase64;
@@ -428,6 +500,7 @@ class ChatController extends GetxController {
     } catch (e) {
       if (generationId != _generationSerial) return;
       isStreaming.value = false;
+      streamingAttachmentType.value = null;
       streamingResponse.value = '';
       Get.find<AppLogService>().error('Chat response failed', details: e);
       final errorMsg = ChatMessage(
@@ -459,6 +532,7 @@ class ChatController extends GetxController {
     _generationSerial++;
     isLoading.value = false;
     isStreaming.value = false;
+    streamingAttachmentType.value = null;
     streamingResponse.value = '';
     unawaited(Get.find<InferenceService>().stopGeneration());
   }
@@ -495,7 +569,26 @@ class ChatController extends GetxController {
     if (!scrollController.hasClients) return;
     final position = scrollController.position;
     final distanceFromBottom = position.maxScrollExtent - position.pixels;
-    _followStreaming = distanceFromBottom <= 180;
+    if (!isStreaming.value) {
+      _followStreaming = distanceFromBottom <= 180;
+    } else if (distanceFromBottom <= 48) {
+      _followStreaming = true;
+    }
+  }
+
+  void pauseStreamingFollow() {
+    if (isStreaming.value) {
+      _followStreaming = false;
+    }
+  }
+
+  void resumeStreamingFollowIfNearBottom() {
+    if (!scrollController.hasClients) return;
+    final position = scrollController.position;
+    final distanceFromBottom = position.maxScrollExtent - position.pixels;
+    if (distanceFromBottom <= 48) {
+      _followStreaming = true;
+    }
   }
 
   void _scrollToBottom({bool force = false}) {
@@ -517,7 +610,13 @@ class ChatController extends GetxController {
 
   String get _effectiveSystemPrompt {
     final settings = Get.find<SettingsController>();
-    return settings.globalSystemPrompt.value;
+    final inference = Get.find<InferenceService>();
+    final modelName = settings.inferenceMode.value == 'local'
+        ? inference.loadedModelName.value
+        : settings.selectedCloudModelName;
+    return settings.effectiveSystemPromptForModel(
+      modelName,
+    );
   }
 
   String _attachmentTypeForExtension(String extension) {

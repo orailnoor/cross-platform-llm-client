@@ -7,6 +7,7 @@ import '../core/colors.dart';
 import '../core/constants.dart';
 import '../services/inference_service.dart';
 import '../services/device_info_service.dart';
+import 'log_view.dart';
 
 class SettingsView extends GetView<SettingsController> {
   const SettingsView({super.key});
@@ -24,6 +25,9 @@ class SettingsView extends GetView<SettingsController> {
               // ── Appearance ────────────────────────
               _buildSectionHeader(context, 'APPEARANCE'),
               _buildThemeCard(),
+              const SizedBox(height: 20),
+              _buildSectionHeader(context, 'DIAGNOSTICS'),
+              _buildDiagnosticsCard(context),
               const SizedBox(height: 20),
 
               // ── Device Info ───────────────────────
@@ -371,6 +375,33 @@ class SettingsView extends GetView<SettingsController> {
         ),
       );
     });
+  }
+
+  Widget _buildDiagnosticsCard(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppColors.info.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.article_outlined,
+              color: AppColors.info, size: 22),
+        ),
+        title: Text(
+          'Logs',
+          style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          'View errors, warnings, and share debug details.',
+          style: GoogleFonts.inter(
+              fontSize: 12, color: Theme.of(context).hintColor),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Get.to(() => const LogView()),
+      ),
+    );
   }
 
   Widget _buildSmartSlider({
