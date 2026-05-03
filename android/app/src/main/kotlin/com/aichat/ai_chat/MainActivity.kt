@@ -1,10 +1,13 @@
 package com.aichat.ai_chat
 
 import android.app.AlertDialog
+import android.app.AlarmManager
 import android.app.DownloadManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import android.os.Environment
@@ -13,16 +16,23 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.concurrent.thread
+import kotlin.system.exitProcess
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     private val importChannelName = "com.aichat.ai_chat/model_import"
+    private val tunnelChannelName = "com.aichat.ai_chat/tunnel"
     private val importRequestCode = 4207
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var importChannel: MethodChannel? = null
+    private var tunnelChannel: MethodChannel? = null
     private var pendingImportResult: MethodChannel.Result? = null
     private var pendingModelsDir: String? = null
+    private var tunnelProcess: Process? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -57,9 +67,295 @@ class MainActivity : FlutterActivity() {
                         result.error("DOWNLOAD_FAILED", e.message ?: e.toString(), null)
                     }
                 }
+                "restartApp" -> {
+                    restartApp()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
+
+        tunnelChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, tunnelChannelName)
+        tunnelChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "startTunnel" -> {
+                    val provider = call.argument<String>("provider") ?: "cloudflare"
+                    val port = call.argument<Int>("port") ?: 8080
+                    val cloudflareToken = call.argument<String>("cloudflareToken") ?: ""
+                    val cloudflarePublicUrl = call.argument<String>("cloudflarePublicUrl") ?: ""
+                    val ngrokAuthToken = call.argument<String>("ngrokAuthToken") ?: ""
+                    val ngrokDomain = call.argument<String>("ngrokDomain") ?: ""
+                    startTunnelAsync(
+                        provider = provider,
+                        port = port,
+                        cloudflareToken = cloudflareToken,
+                        cloudflarePublicUrl = cloudflarePublicUrl,
+                        ngrokAuthToken = ngrokAuthToken,
+                        ngrokDomain = ngrokDomain,
+                        result = result
+                    )
+                }
+                "stopTunnel" -> {
+                    stopTunnel()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun startTunnelAsync(
+        provider: String,
+        port: Int,
+        cloudflareToken: String,
+        cloudflarePublicUrl: String,
+        ngrokAuthToken: String,
+        ngrokDomain: String,
+        result: MethodChannel.Result,
+    ) {
+        thread(name = "ai-chat-tunnel-start") {
+            try {
+                stopTunnel()
+                val tunnelResult = if (provider == "ngrok") {
+                    startNgrokTunnel(port, ngrokAuthToken, ngrokDomain)
+                } else {
+                    startCloudflareTunnel(port, cloudflareToken, cloudflarePublicUrl)
+                }
+                mainHandler.post {
+                    result.success(
+                        mapOf(
+                            "success" to tunnelResult.success,
+                            "publicUrl" to tunnelResult.publicUrl,
+                            "error" to tunnelResult.error
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    result.success(
+                        mapOf(
+                            "success" to false,
+                            "publicUrl" to null,
+                            "error" to (e.message ?: e.toString())
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startCloudflareTunnel(
+        port: Int,
+        token: String,
+        configuredUrl: String,
+    ): TunnelResult {
+        val binary = resolveNativeBinary("libcloudflared.so")
+            ?: return TunnelResult(false, null, "cloudflared binary is missing for this ABI.")
+        val args = mutableListOf(
+            binary.absolutePath,
+            "tunnel",
+            "--no-autoupdate",
+            "--protocol",
+            "http2",
+        )
+        val normalizedConfiguredUrl = normalizeHttpsUrl(configuredUrl)
+        if (token.isNotBlank()) {
+            args += listOf("run", "--token", token.trim())
+        } else {
+            args += listOf("--url", "http://localhost:$port")
+        }
+        val process = startTunnelProcess(args)
+        tunnelProcess = process
+
+        val deadline = System.currentTimeMillis() + 45000L
+        var publicUrl = normalizedConfiguredUrl
+        val reader = process.inputStream.bufferedReader()
+        while (System.currentTimeMillis() < deadline) {
+            if (processHasExited(process)) {
+                return TunnelResult(false, null, "cloudflared exited before the tunnel was ready.")
+            }
+            val line = readLineWithTimeout(reader) ?: continue
+            Log.d("AIChatTunnel", "cloudflared: $line")
+            publicUrl = publicUrl ?: Regex("""https://[A-Za-z0-9.-]+\.trycloudflare\.com""")
+                .find(line)
+                ?.value
+            if (line.contains("Registered tunnel connection") && publicUrl != null) {
+                startLogReader(reader, "cloudflared")
+                return TunnelResult(true, publicUrl, null)
+            }
+        }
+        return TunnelResult(false, null, "Cloudflare tunnel did not become ready in time.")
+    }
+
+    private fun startNgrokTunnel(
+        port: Int,
+        authToken: String,
+        domain: String,
+    ): TunnelResult {
+        if (authToken.isBlank()) {
+            return TunnelResult(false, null, "ngrok auth token is required.")
+        }
+        val binary = resolveNativeBinary("libngrok.so")
+            ?: return TunnelResult(false, null, "ngrok binary is missing for this ABI.")
+        val configFile = writeNgrokConfig(authToken)
+        val args = mutableListOf(
+            binary.absolutePath,
+            "http",
+            port.toString(),
+            "--config",
+            configFile.absolutePath,
+            "--log",
+            "stdout",
+            "--log-format",
+            "json",
+        )
+        val requestedUrl = normalizeHttpsUrl(domain)
+        if (requestedUrl != null) {
+            args += listOf("--url", requestedUrl)
+        }
+        val process = startTunnelProcess(args)
+        tunnelProcess = process
+        startLogReader(process.inputStream.bufferedReader(), "ngrok")
+        val deadline = System.currentTimeMillis() + 30000L
+        while (System.currentTimeMillis() < deadline) {
+            if (processHasExited(process)) {
+                return TunnelResult(false, null, "ngrok exited before the tunnel was ready.")
+            }
+            queryNgrokPublicUrl()?.let { url ->
+                if (requestedUrl == null || requestedUrl == url) {
+                    return TunnelResult(true, url, null)
+                }
+            }
+            Thread.sleep(500L)
+        }
+        return TunnelResult(false, null, "ngrok tunnel did not become ready in time.")
+    }
+
+    private fun startTunnelProcess(args: List<String>): Process {
+        return ProcessBuilder(args).apply {
+            directory(filesDir)
+            environment()["HOME"] = filesDir.parentFile?.absolutePath ?: filesDir.absolutePath
+            redirectErrorStream(true)
+        }.start()
+    }
+
+    private fun resolveNativeBinary(name: String): File? {
+        val nativeDir = applicationInfo.nativeLibraryDir ?: return null
+        return File(nativeDir, name).takeIf { it.exists() }
+    }
+
+    private fun stopTunnel() {
+        try {
+            tunnelProcess?.destroy()
+        } catch (_: Exception) {}
+        tunnelProcess = null
+    }
+
+    private fun processHasExited(process: Process): Boolean {
+        return try {
+            process.exitValue()
+            true
+        } catch (_: IllegalThreadStateException) {
+            false
+        }
+    }
+
+    private fun readLineWithTimeout(reader: java.io.BufferedReader): String? {
+        val started = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < 500L) {
+            if (reader.ready()) return reader.readLine()
+            Thread.sleep(50L)
+        }
+        return null
+    }
+
+    private fun startLogReader(reader: java.io.BufferedReader, label: String) {
+        thread(name = "ai-chat-$label-log", isDaemon = true) {
+            try {
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    Log.d("AIChatTunnel", "$label: ${line.orEmpty()}")
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun writeNgrokConfig(authToken: String): File {
+        val dir = File(filesDir, "ngrok")
+        if (!dir.exists()) dir.mkdirs()
+        val file = File(dir, "ngrok.yml")
+        file.writeText(
+            """
+            version: 3
+            agent:
+              authtoken: ${authToken.trim()}
+              dns_resolver_ips:
+                - 1.1.1.1
+                - 8.8.8.8
+              update_check: false
+              crl_noverify: true
+            """.trimIndent()
+        )
+        return file
+    }
+
+    private fun queryNgrokPublicUrl(): String? {
+        val connection = (URL("http://127.0.0.1:4040/api/tunnels").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 4000
+            readTimeout = 4000
+            doInput = true
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            if (connection.responseCode !in 200..299) return null
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val tunnels = JSONObject(body).optJSONArray("tunnels") ?: return null
+            for (i in 0 until tunnels.length()) {
+                val url = tunnels.optJSONObject(i)?.optString("public_url").orEmpty()
+                if (url.startsWith("https://")) return url.trimEnd('/')
+            }
+            null
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun normalizeHttpsUrl(value: String): String? {
+        val trimmed = value.trim().trimEnd('/').trimStart('.')
+        if (trimmed.isBlank()) return null
+        return if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) trimmed else "https://$trimmed"
+    }
+
+    private data class TunnelResult(
+        val success: Boolean,
+        val publicUrl: String?,
+        val error: String?,
+    )
+
+    private fun restartApp() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        if (launchIntent == null) {
+            finishAffinity()
+            return
+        }
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            9208,
+            launchIntent,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.RTC,
+            System.currentTimeMillis() + 350L,
+            pendingIntent
+        )
+        finishAffinity()
+        exitProcess(0)
     }
 
     private fun enqueueDownloadToDownloads(url: String, filename: String): Long {

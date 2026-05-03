@@ -7,6 +7,7 @@ import '../core/colors.dart';
 import '../core/constants.dart';
 import '../services/inference_service.dart';
 import '../services/device_info_service.dart';
+import 'log_view.dart';
 
 class SettingsView extends GetView<SettingsController> {
   const SettingsView({super.key});
@@ -25,6 +26,9 @@ class SettingsView extends GetView<SettingsController> {
               _buildSectionHeader(context, 'APPEARANCE'),
               _buildThemeCard(),
               const SizedBox(height: 20),
+              _buildSectionHeader(context, 'DIAGNOSTICS'),
+              _buildDiagnosticsCard(context),
+              const SizedBox(height: 20),
 
               // ── Device Info ───────────────────────
               _buildSectionHeader(context, 'DEVICE'),
@@ -42,6 +46,7 @@ class SettingsView extends GetView<SettingsController> {
               // ── Cloud API Config ────────────────
               // ── Model Parameters (RAM-aware) ─────
               _buildSectionHeader(context, 'MODEL PARAMETERS'),
+              _buildLiteRtPerformanceCard(context),
               _buildSmartSlider(
                 context: context,
                 label: 'Temperature',
@@ -261,6 +266,58 @@ class SettingsView extends GetView<SettingsController> {
     );
   }
 
+  Widget _buildLiteRtPerformanceCard(BuildContext context) {
+    final modes = [
+      (
+        value: 'auto_fast',
+        title: 'Auto Fast',
+        subtitle: 'Try GPU like Edge Gallery, then use CPU if GPU is unsafe.',
+        icon: Icons.auto_awesome,
+      ),
+      (
+        value: 'gpu_fast',
+        title: 'GPU Fast',
+        subtitle: 'Maximum LiteRT speed attempt. Can crash on some devices.',
+        icon: Icons.bolt,
+      ),
+      (
+        value: 'cpu_safe',
+        title: 'CPU Safe',
+        subtitle: 'Stable LiteRT mode with lower token speed.',
+        icon: Icons.shield_outlined,
+      ),
+    ];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Column(
+          children: [
+            for (final mode in modes)
+              ListTile(
+                onTap: () => controller.setLiteRtPerformanceMode(mode.value),
+                leading: Icon(mode.icon, color: AppColors.primary),
+                title: Text(
+                  mode.title,
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  mode.subtitle,
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor),
+                ),
+                trailing: controller.liteRtPerformanceMode.value == mode.value
+                    ? const Icon(Icons.check, color: AppColors.primary)
+                    : null,
+                dense: true,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDeviceInfoCard(BuildContext context) {
     return Obx(() {
       final device = Get.find<DeviceInfoService>();
@@ -332,6 +389,33 @@ class SettingsView extends GetView<SettingsController> {
         ),
       );
     });
+  }
+
+  Widget _buildDiagnosticsCard(BuildContext context) {
+    return Card(
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppColors.info.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.article_outlined,
+              color: AppColors.info, size: 22),
+        ),
+        title: Text(
+          'Logs',
+          style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(
+          'View errors, warnings, and share debug details.',
+          style: GoogleFonts.inter(
+              fontSize: 12, color: Theme.of(context).hintColor),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Get.to(() => const LogView()),
+      ),
+    );
   }
 
   Widget _buildSmartSlider({

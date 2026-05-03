@@ -39,6 +39,7 @@ class SettingsController extends GetxController {
   final temperature = 0.1.obs;
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
+  final liteRtPerformanceMode = AppConstants.defaultLiteRtPerformanceMode.obs;
   final imageSteps = 4.obs;
 
   // Persistent text controllers for settings fields
@@ -157,6 +158,11 @@ class SettingsController extends GetxController {
     contextSize.value = _hive.getSetting(AppConstants.keyContextSize,
             defaultValue: AppConstants.defaultContextSize) ??
         AppConstants.defaultContextSize;
+    liteRtPerformanceMode.value = _hive.getSetting(
+          AppConstants.keyLiteRtPerformanceMode,
+          defaultValue: AppConstants.defaultLiteRtPerformanceMode,
+        ) ??
+        AppConstants.defaultLiteRtPerformanceMode;
     imageSteps.value = _hive.getSetting(AppConstants.keyImageSteps,
             defaultValue: AppConstants.defaultImageSteps) ??
         AppConstants.defaultImageSteps;
@@ -223,6 +229,27 @@ class SettingsController extends GetxController {
         return customCloudModelController;
       default:
         return openaiModelController;
+    }
+  }
+
+  String get selectedCloudModelName {
+    switch (cloudProvider.value) {
+      case 'anthropic':
+        return anthropicModel.value;
+      case 'google':
+        return googleModel.value;
+      case 'kimi':
+        return kimiModel.value;
+      case 'stability':
+        return stabilityModel.value;
+      case 'nvidia':
+        return nvidiaModel.value;
+      case 'openrouter':
+        return openRouterModel.value;
+      case 'custom':
+        return customCloudModel.value;
+      default:
+        return openaiModel.value;
     }
   }
 
@@ -376,6 +403,17 @@ class SettingsController extends GetxController {
     await _hive.setSetting(AppConstants.keyGlobalSystemPrompt, normalized);
   }
 
+  String effectiveSystemPromptForModel(String modelName) {
+    final prompt = globalSystemPrompt.value.trim();
+    final hasCustomPrompt =
+        prompt.isNotEmpty && prompt != AppConstants.systemPrompt;
+    if (hasCustomPrompt) return prompt;
+    if (AppConstants.isUncensoredModelName(modelName)) {
+      return AppConstants.uncensoredSystemPrompt;
+    }
+    return AppConstants.systemPrompt;
+  }
+
   Future<void> refreshNvidiaModels() async {
     if (nvidiaKey.value.trim().isEmpty) return;
     isLoadingNvidiaModels.value = true;
@@ -431,6 +469,17 @@ class SettingsController extends GetxController {
     await _hive.setSetting(AppConstants.keyContextSize, value);
   }
 
+  Future<void> setLiteRtPerformanceMode(String mode) async {
+    final normalized = switch (mode) {
+      'gpu_fast' => 'gpu_fast',
+      'cpu_safe' => 'cpu_safe',
+      _ => AppConstants.defaultLiteRtPerformanceMode,
+    };
+    liteRtPerformanceMode.value = normalized;
+    await _hive.setSetting(AppConstants.keyLiteRtPerformanceMode, normalized);
+    if (normalized == 'gpu_fast') {
+      await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
+    }
   Future<void> setImageSteps(int value) async {
     imageSteps.value = value;
     await _hive.setSetting(AppConstants.keyImageSteps, value);

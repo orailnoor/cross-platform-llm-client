@@ -258,104 +258,23 @@ class ModelView extends GetView<ModelController> {
     final isVision = false.obs;
     final isDetecting = false.obs;
 
-    Get.dialog(AlertDialog(
-      title: Text('Add Model URL',
-          style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: urlController,
-              decoration: const InputDecoration(labelText: 'Model URL'),
-              onChanged: (value) {
-                if (filenameController.text.trim().isEmpty &&
-                    value.trim().isNotEmpty) {
-                  filenameController.text =
-                      controller.filenameFromUrl(value.trim());
-                }
-              },
-            ),
-            const SizedBox(height: 10),
-            TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Display name')),
-            const SizedBox(height: 10),
-            TextField(
-                controller: filenameController,
-                decoration: const InputDecoration(labelText: 'Filename')),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                    child: TextField(
-                        controller: sizeController,
-                        decoration: const InputDecoration(labelText: 'Size'))),
-                const SizedBox(width: 8),
-                Obx(() => IconButton(
-                      tooltip: 'Detect size',
-                      onPressed: isDetecting.value
-                          ? null
-                          : () async {
-                              final url = urlController.text.trim();
-                              if (url.isEmpty) return;
-                              isDetecting.value = true;
-                              try {
-                                sizeController.text =
-                                    await controller.detectUrlSize(url);
-                              } finally {
-                                isDetecting.value = false;
-                              }
-                            },
-                      icon: isDetecting.value
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.speed),
-                    )),
-              ],
-            ),
-            const SizedBox(height: 10),
-            TextField(
-                controller: templateController,
-                decoration: const InputDecoration(labelText: 'Template')),
-            const SizedBox(height: 10),
-            TextField(
-                controller: descriptionController,
-                decoration: const InputDecoration(labelText: 'Description')),
-            const SizedBox(height: 8),
-            Obx(() => SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: isVision.value,
-                  onChanged: (value) => isVision.value = value,
-                  title: Text('Vision model',
-                      style: GoogleFonts.inter(fontSize: 13)),
-                )),
-          ],
-        ),
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (ctx) => _AddModelUrlSheet(
+        nameController: nameController,
+        urlController: urlController,
+        filenameController: filenameController,
+        sizeController: sizeController,
+        descriptionController: descriptionController,
+        templateController: templateController,
+        isVision: isVision,
+        isDetecting: isDetecting,
+        modelController: controller,
       ),
-      actions: [
-        TextButton(onPressed: Get.back, child: const Text('Cancel')),
-        ElevatedButton(
-          onPressed: () async {
-            final url = urlController.text.trim();
-            if (url.isEmpty) return;
-            await controller.addModelFromUrl(
-              name: nameController.text,
-              url: url,
-              filename: filenameController.text,
-              size: sizeController.text,
-              description: descriptionController.text,
-              template: templateController.text,
-              isVision: isVision.value,
-            );
-            Get.back();
-          },
-          child: const Text('Add'),
-        ),
-      ],
-    ));
+    );
   }
 
   Widget _buildActiveModelBanner(BuildContext context) {
@@ -1515,8 +1434,7 @@ class ModelView extends GetView<ModelController> {
                               ? Icons.eject_outlined
                               : Icons.delete_outline,
                           size: 18,
-                          color:
-                              isActive ? AppColors.warning : AppColors.error,
+                          color: isActive ? AppColors.warning : AppColors.error,
                         ),
                       ),
                     ] else ...[
@@ -1643,4 +1561,625 @@ class ModelView extends GetView<ModelController> {
       );
     });
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add Model URL — Modern Bottom Sheet
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AddModelUrlSheet extends StatefulWidget {
+  final TextEditingController nameController;
+  final TextEditingController urlController;
+  final TextEditingController filenameController;
+  final TextEditingController sizeController;
+  final TextEditingController descriptionController;
+  final TextEditingController templateController;
+  final RxBool isVision;
+  final RxBool isDetecting;
+  final ModelController modelController;
+
+  const _AddModelUrlSheet({
+    required this.nameController,
+    required this.urlController,
+    required this.filenameController,
+    required this.sizeController,
+    required this.descriptionController,
+    required this.templateController,
+    required this.isVision,
+    required this.isDetecting,
+    required this.modelController,
+  });
+
+  @override
+  State<_AddModelUrlSheet> createState() => _AddModelUrlSheetState();
+}
+
+class _AddModelUrlSheetState extends State<_AddModelUrlSheet> {
+  static const _templates = ['chatml', 'llama3', 'gemma', 'phi3', 'custom'];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.urlController.addListener(_onUrlChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.urlController.removeListener(_onUrlChanged);
+    super.dispose();
+  }
+
+  void _onUrlChanged() {
+    final url = widget.urlController.text.trim();
+    if (widget.filenameController.text.trim().isEmpty && url.isNotEmpty) {
+      widget.filenameController.text =
+          widget.modelController.filenameFromUrl(url);
+    }
+  }
+
+  Future<void> _detectSize() async {
+    final url = widget.urlController.text.trim();
+    if (url.isEmpty) return;
+    widget.isDetecting.value = true;
+    try {
+      widget.sizeController.text =
+          await widget.modelController.detectUrlSize(url);
+    } finally {
+      widget.isDetecting.value = false;
+    }
+  }
+
+  Future<void> _submit() async {
+    final url = widget.urlController.text.trim();
+    if (url.isEmpty) return;
+    await widget.modelController.addModelFromUrl(
+      name: widget.nameController.text,
+      url: url,
+      filename: widget.filenameController.text,
+      size: widget.sizeController.text,
+      description: widget.descriptionController.text,
+      template: widget.templateController.text,
+      isVision: widget.isVision.value,
+    );
+    if (context.mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+    const sheetBg = Color(0xFF13131F);
+    const fieldBg = Color(0xFF1C1C2C);
+    const borderCol = Color(0xFF2A2A3D);
+
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Container(
+        margin: EdgeInsets.only(bottom: bottomPadding),
+        decoration: const BoxDecoration(
+          color: sheetBg,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Drag handle
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 4),
+
+            // Header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF1A1A2E), Color(0xFF13131F)],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.primary, Color(0xFF009B7D)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.35),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.add_link_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Add Model URL',
+                          style: GoogleFonts.inter(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Download a GGUF or LiteRT model from any URL',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded,
+                        color: AppColors.textSecondary, size: 20),
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.surface,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.all(8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Accent divider
+            Container(
+              height: 1,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [
+                  AppColors.primary.withValues(alpha: 0.6),
+                  AppColors.secondary.withValues(alpha: 0.3),
+                  Colors.transparent,
+                ]),
+              ),
+            ),
+
+            // Scrollable form
+            Flexible(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionLabel(
+                        label: 'MODEL URL', color: AppColors.primary),
+                    const SizedBox(height: 8),
+                    _SheetTextField(
+                      controller: widget.urlController,
+                      hint: 'https://huggingface.co/…/model.gguf',
+                      prefixIcon: Icons.link_rounded,
+                      keyboardType: TextInputType.url,
+                      bg: fieldBg,
+                      border: borderCol,
+                    ),
+                    const SizedBox(height: 20),
+
+                    const _SectionLabel(label: 'MODEL INFO'),
+                    const SizedBox(height: 8),
+                    _SheetTextField(
+                      controller: widget.nameController,
+                      hint: 'Display name  (e.g. Qwen3-0.6B)',
+                      prefixIcon: Icons.label_outline_rounded,
+                      bg: fieldBg,
+                      border: borderCol,
+                    ),
+                    const SizedBox(height: 12),
+                    _SheetTextField(
+                      controller: widget.filenameController,
+                      hint: 'Filename  (e.g. qwen3-0.6b.gguf)',
+                      prefixIcon: Icons.insert_drive_file_outlined,
+                      bg: fieldBg,
+                      border: borderCol,
+                    ),
+                    const SizedBox(height: 20),
+
+                    const _SectionLabel(label: 'FILE SIZE'),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _SheetTextField(
+                            controller: widget.sizeController,
+                            hint: 'e.g. 1.2 GB',
+                            prefixIcon: Icons.data_usage_rounded,
+                            bg: fieldBg,
+                            border: borderCol,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Obx(() => _DetectSizeButton(
+                              isLoading: widget.isDetecting.value,
+                              onTap: _detectSize,
+                            )),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    const _SectionLabel(label: 'CHAT TEMPLATE'),
+                    const SizedBox(height: 8),
+                    _TemplateSelector(
+                      controller: widget.templateController,
+                      templates: _templates,
+                      bg: fieldBg,
+                      border: borderCol,
+                      accentColor: AppColors.primary,
+                    ),
+                    const SizedBox(height: 20),
+
+                    const _SectionLabel(label: 'DESCRIPTION  (optional)'),
+                    const SizedBox(height: 8),
+                    _SheetTextField(
+                      controller: widget.descriptionController,
+                      hint: 'Short description of the model…',
+                      prefixIcon: Icons.notes_rounded,
+                      maxLines: 2,
+                      bg: fieldBg,
+                      border: borderCol,
+                    ),
+                    const SizedBox(height: 20),
+
+                    Obx(() => _VisionToggle(
+                          value: widget.isVision.value,
+                          onChanged: (v) => widget.isVision.value = v,
+                          bg: fieldBg,
+                          border: borderCol,
+                        )),
+                    const SizedBox(height: 28),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.textSecondary,
+                              side: const BorderSide(color: borderCol),
+                              padding: const EdgeInsets.symmetric(vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: Text('Cancel',
+                                style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.w600, fontSize: 14)),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 3,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppColors.primary, Color(0xFF009B7D)],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      AppColors.primary.withValues(alpha: 0.4),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: _submit,
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                          Icons.download_for_offline_rounded,
+                                          color: Colors.white,
+                                          size: 18),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Add Model',
+                                        style: GoogleFonts.inter(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Section label ─────────────────────────────────────────────────────────────
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _SectionLabel({required this.label, this.color = AppColors.textMuted});
+
+  @override
+  Widget build(BuildContext context) => Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.4,
+          color: color,
+        ),
+      );
+}
+
+// ── Styled text field ─────────────────────────────────────────────────────────
+class _SheetTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final IconData prefixIcon;
+  final TextInputType? keyboardType;
+  final int maxLines;
+  final Color bg;
+  final Color border;
+
+  const _SheetTextField({
+    required this.controller,
+    required this.hint,
+    required this.prefixIcon,
+    this.keyboardType,
+    this.maxLines = 1,
+    required this.bg,
+    required this.border,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: border),
+        ),
+        child: TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          maxLines: maxLines,
+          style: GoogleFonts.inter(
+              fontSize: 14, color: Colors.white, fontWeight: FontWeight.w400),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle:
+                GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
+            prefixIcon: Icon(prefixIcon, color: AppColors.textMuted, size: 18),
+            border: InputBorder.none,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          ),
+        ),
+      );
+}
+
+// ── Detect Size button ────────────────────────────────────────────────────────
+class _DetectSizeButton extends StatelessWidget {
+  final bool isLoading;
+  final VoidCallback onTap;
+  const _DetectSizeButton({required this.isLoading, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: isLoading ? null : onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: isLoading
+                ? AppColors.surface
+                : AppColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isLoading
+                  ? AppColors.border
+                  : AppColors.primary.withValues(alpha: 0.4),
+            ),
+          ),
+          child: Center(
+            child: isLoading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.primary),
+                  )
+                : const Icon(Icons.radar_rounded,
+                    color: AppColors.primary, size: 22),
+          ),
+        ),
+      );
+}
+
+// ── Template selector ─────────────────────────────────────────────────────────
+class _TemplateSelector extends StatefulWidget {
+  final TextEditingController controller;
+  final List<String> templates;
+  final Color bg;
+  final Color border;
+  final Color accentColor;
+
+  const _TemplateSelector({
+    required this.controller,
+    required this.templates,
+    required this.bg,
+    required this.border,
+    required this.accentColor,
+  });
+
+  @override
+  State<_TemplateSelector> createState() => _TemplateSelectorState();
+}
+
+class _TemplateSelectorState extends State<_TemplateSelector> {
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: widget.templates.map((t) {
+            final sel = widget.controller.text == t;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: GestureDetector(
+                onTap: () => setState(() => widget.controller.text = t),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: sel
+                        ? widget.accentColor.withValues(alpha: 0.18)
+                        : widget.bg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: sel
+                          ? widget.accentColor.withValues(alpha: 0.6)
+                          : widget.border,
+                      width: sel ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Text(
+                    t,
+                    style: GoogleFonts.firaCode(
+                      fontSize: 13,
+                      fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                      color: sel ? widget.accentColor : AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      );
+}
+
+// ── Vision toggle ─────────────────────────────────────────────────────────────
+class _VisionToggle extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final Color bg;
+  final Color border;
+
+  const _VisionToggle({
+    required this.value,
+    required this.onChanged,
+    required this.bg,
+    required this.border,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: () => onChanged(!value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: value ? AppColors.secondary.withValues(alpha: 0.12) : bg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color:
+                  value ? AppColors.secondary.withValues(alpha: 0.5) : border,
+              width: value ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: value
+                      ? AppColors.secondary.withValues(alpha: 0.2)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  value
+                      ? Icons.visibility_rounded
+                      : Icons.visibility_off_rounded,
+                  color: value ? AppColors.secondary : AppColors.textMuted,
+                  size: 16,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Vision Model',
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: value ? Colors.white : AppColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      'Supports image input (multimodal)',
+                      style: GoogleFonts.inter(
+                          fontSize: 11, color: AppColors.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: value,
+                onChanged: onChanged,
+                activeThumbColor: AppColors.secondary,
+                activeTrackColor: AppColors.secondary.withValues(alpha: 0.3),
+                inactiveThumbColor: AppColors.textMuted,
+                inactiveTrackColor: AppColors.surface,
+              ),
+            ],
+          ),
+        ),
+      );
 }

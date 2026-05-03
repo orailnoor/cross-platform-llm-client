@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'controllers/settings_controller.dart';
 import 'controllers/cloud_model_controller.dart';
+import 'controllers/server_controller.dart';
 import 'core/theme.dart';
 import 'core/routes.dart';
 import 'services/hive_service.dart';
@@ -42,6 +43,7 @@ void main() async {
   Get.put(DownloadService());
   Get.put(LocalImageService());
   Get.put(AppLogService());
+  Get.put(ServerController(), permanent: true);
 
   // Auto-configure inference settings based on device RAM
   _autoConfigureForDevice();

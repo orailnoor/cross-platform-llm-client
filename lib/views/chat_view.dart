@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
@@ -8,6 +7,7 @@ import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../services/inference_service.dart';
 import '../utils/thought_parser.dart';
+import '../widgets/attachment_preview.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/thought_disclosure.dart';
 
@@ -150,94 +150,34 @@ class ChatView extends GetView<ChatController> {
               final streamText = controller.streamingResponse.value;
               final msgCount = controller.messages.length;
 
-              return ListView.builder(
-                controller: controller.scrollController,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                itemCount: msgCount + (isStreaming ? 1 : 0),
-                itemBuilder: (context, index) {
-                  // Streaming bubble at the end
-                  if (index == msgCount && isStreaming) {
-                    return _buildStreamingBubble(context, streamText);
+              return NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notification) {
+                  if (notification.dragDetails != null && isStreaming) {
+                    final delta = notification.scrollDelta ?? 0;
+                    if (delta < 0) {
+                      controller.pauseStreamingFollow();
+                    } else {
+                      controller.resumeStreamingFollowIfNearBottom();
+                    }
                   }
-                  return ChatBubble(message: controller.messages[index]);
+                  return false;
                 },
+                child: ListView.builder(
+                  controller: controller.scrollController,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: msgCount + (isStreaming ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    // Streaming bubble at the end
+                    if (index == msgCount && isStreaming) {
+                      return _buildStreamingBubble(context, streamText);
+                    }
+                    return ChatBubble(message: controller.messages[index]);
+                  },
+                ),
               );
             }),
           ),
-
-          // Image preview
-          Obx(() {
-            if (controller.selectedImagePath.value == null &&
-                controller.selectedFileName.value == null) {
-              return const SizedBox.shrink();
-            }
-            return Container(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Column(
-                children: [
-                  if (controller.selectedImagePath.value != null)
-                    Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: controller.selectedImageBase64.value != null
-                              ? Image.memory(
-                                  base64Decode(
-                                      controller.selectedImageBase64.value!),
-                                  width: 52,
-                                  height: 52,
-                                  fit: BoxFit.cover,
-                                )
-                              : Container(
-                                  width: 52,
-                                  height: 52,
-                                  color: Colors.grey[300],
-                                  child: const Icon(Icons.image, size: 26),
-                                ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('Image attached',
-                            style: GoogleFonts.inter(
-                                color: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.color ??
-                                    Colors.grey,
-                                fontSize: 13)),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: controller.clearImage,
-                        ),
-                      ],
-                    ),
-                  if (controller.selectedFileName.value != null)
-                    Row(
-                      children: [
-                        const Icon(Icons.description_outlined,
-                            size: 22, color: AppColors.secondary),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            controller.selectedFileName.value!,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: controller.clearFile,
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            );
-          }),
 
           // Input bar
           _buildInputBar(context),
@@ -248,6 +188,7 @@ class ChatView extends GetView<ChatController> {
 
   /// Real-time streaming bubble — shows AI response as it generates token-by-token.
   Widget _buildStreamingBubble(BuildContext context, String text) {
+    final attachmentType = controller.streamingAttachmentType.value;
     final visibleText = _cleanStreamingText(text).trimLeft();
     final thoughtParts = splitThoughtTags(visibleText);
     final answerText = thoughtParts.answer.trimLeft();
@@ -277,7 +218,7 @@ class ChatView extends GetView<ChatController> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             !hasVisibleText
-                ? _buildTypingIndicator(context)
+                ? _buildTypingIndicator(context, attachmentType: attachmentType)
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -330,8 +271,36 @@ class ChatView extends GetView<ChatController> {
   }
 
   /// Animated typing dots — shown only during prefill (before first token).
-  Widget _buildTypingIndicator(BuildContext context) {
-    return const _TypingDots();
+  Widget _buildTypingIndicator(
+    BuildContext context, {
+    String? attachmentType,
+  }) {
+    final message = attachmentType == 'image'
+        ? 'Reading image. This may take a few seconds...'
+        : attachmentType == 'audio'
+            ? 'Listening to audio. This may take a few seconds...'
+            : null;
+
+    if (message == null) return const _TypingDots();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const _TypingDots(),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            message,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              height: 1.25,
+              color: Theme.of(context).hintColor,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   MarkdownStyleSheet _streamingMarkdownStyle(BuildContext context) {
@@ -376,9 +345,14 @@ class ChatView extends GetView<ChatController> {
 
   String _cleanStreamingText(String text) {
     return text
-        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(
+            RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]'),
+            '')
         .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
-        .replaceAll('\uFFFD', '');
+        .replaceAll('\uFFFD', '')
+        .replaceAll('<|endoftext|>', '')
+        .replaceAll('<|im_end|>', '')
+        .replaceAll('<|end|>', '');
   }
 
   bool _hasPrintableStreamingText(String text) {
@@ -615,6 +589,26 @@ class ChatView extends GetView<ChatController> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Obx(() {
+              final name = controller.selectedFileName.value;
+              if (name == null) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                child: AttachmentPreview(
+                  fileName: name,
+                  fileType: controller.selectedFileType.value,
+                  fileSize: controller.selectedFileSize.value > 0
+                      ? controller.selectedFileSize.value
+                      : null,
+                  imagePath: controller.selectedImagePath.value,
+                  imageBase64: controller.selectedImageBase64.value,
+                  onRemove: () {
+                    controller.clearImage();
+                    controller.clearFile();
+                  },
+                ),
+              );
+            }),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -623,7 +617,9 @@ class ChatView extends GetView<ChatController> {
                   final settings = Get.find<SettingsController>();
                   final inference = Get.find<InferenceService>();
                   final isLocal = settings.inferenceMode.value == 'local';
-                  final showPicker = !isLocal || inference.isVisionLoaded.value;
+                  final showPicker = isLocal &&
+                      inference.loadedModelRuntime.value == 'litert' &&
+                      inference.isVisionLoaded.value;
 
                   if (!showPicker) return const SizedBox.shrink();
 
@@ -638,16 +634,26 @@ class ChatView extends GetView<ChatController> {
                     constraints: const BoxConstraints(),
                   );
                 }),
-                IconButton(
-                  icon: Icon(
-                    Icons.attach_file,
-                    color: Theme.of(context).hintColor,
-                    size: 22,
-                  ),
-                  onPressed: controller.pickFile,
-                  padding: const EdgeInsets.all(8),
-                  constraints: const BoxConstraints(),
-                ),
+                Obx(() {
+                  final settings = Get.find<SettingsController>();
+                  final inference = Get.find<InferenceService>();
+                  final canAttach = settings.inferenceMode.value == 'local' &&
+                      inference.loadedModelRuntime.value == 'litert' &&
+                      inference.isVisionLoaded.value;
+
+                  if (!canAttach) return const SizedBox.shrink();
+
+                  return IconButton(
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: Theme.of(context).hintColor,
+                      size: 22,
+                    ),
+                    onPressed: controller.pickFile,
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
+                  );
+                }),
                 // Text field
                 Expanded(
                   child: TextField(
@@ -682,27 +688,28 @@ class ChatView extends GetView<ChatController> {
                     return IconButton(
                       icon: const Icon(Icons.stop_circle,
                           color: AppColors.error, size: 28),
-                      onPressed: () {
-                        Get.find<InferenceService>().stopGeneration();
-                        // State clearing is handled inside sendMessage() after generate() returns
-                      },
+                      onPressed: controller.stopGenerating,
                       padding: const EdgeInsets.all(8),
                       constraints: const BoxConstraints(),
                     );
                   }
                   final hasText = controller.inputText.value.isNotEmpty;
+                  final hasAttachment =
+                      controller.selectedFileName.value != null ||
+                          controller.selectedImagePath.value != null;
+                  final canSend = hasText || hasAttachment;
                   return IconButton(
                     icon: Icon(
                       Icons.arrow_upward_rounded,
-                      color: hasText
+                      color: canSend
                           ? AppColors.primary
                           : Theme.of(context).hintColor,
                       size: 24,
                     ),
-                    onPressed: hasText ? controller.sendMessage : null,
+                    onPressed: canSend ? controller.sendMessage : null,
                     padding: const EdgeInsets.all(8),
                     constraints: const BoxConstraints(),
-                    style: hasText
+                    style: canSend
                         ? IconButton.styleFrom(
                             backgroundColor:
                                 AppColors.primary.withValues(alpha: 0.15),

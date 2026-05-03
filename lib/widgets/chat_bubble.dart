@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
 import '../models/chat_message.dart';
 import '../utils/thought_parser.dart';
+import 'attachment_preview.dart';
 import 'thought_disclosure.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -20,7 +21,7 @@ class ChatBubble extends StatelessWidget {
         : message.content.split('\n\nAttached file:').first;
     final thoughtParts = isUser
         ? const ThoughtParts(thought: '', answer: '', isThinking: false)
-        : splitThoughtTags(visibleContent);
+        : splitThoughtTags(_cleanAssistantText(visibleContent));
     final answerContent = isUser ? visibleContent : thoughtParts.answer.trim();
 
     return Align(
@@ -87,35 +88,13 @@ class ChatBubble extends StatelessWidget {
               ),
             if (message.fileName != null) ...[
               const SizedBox(height: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest
-                      .withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.description_outlined,
-                        size: 16, color: Theme.of(context).hintColor),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        message.fileName!,
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
+              AttachmentPreview(
+                fileName: message.fileName!,
+                fileType: message.fileType,
+                fileSize: message.fileSize,
+                imageBase64: message.imageBase64,
+                imagePath: message.imagePath,
+                compact: true,
               ),
             ],
 
@@ -204,5 +183,13 @@ class ChatBubble extends StatelessWidget {
     final h = date.hour.toString().padLeft(2, '0');
     final m = date.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  String _cleanAssistantText(String text) {
+    return text
+        .replaceAll('<|endoftext|>', '')
+        .replaceAll('<|im_end|>', '')
+        .replaceAll('<|end|>', '')
+        .trim();
   }
 }

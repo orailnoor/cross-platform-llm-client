@@ -14,12 +14,14 @@ class LoadResult {
   final String gpuName;
   final int gpuLayers;
   final String runtime;
+  final String backend;
   LoadResult({
     required this.success,
     required this.message,
     this.gpuName = '',
     this.gpuLayers = 0,
     this.runtime = '',
+    this.backend = '',
   });
 }
 
@@ -34,18 +36,30 @@ class InferenceEngine {
   bool _isLiteRt = false;
   bool _disposed = false;
   bool _hasLoadedModel = false;
+  String? _liteConversationSystemPrompt;
+  double? _liteConversationTemperature;
+  bool _liteConversationHasMessages = false;
 
   Future<LoadResult> loadModel({
     required String modelPath,
     String? modelRuntime,
     required int contextSize,
     required String deviceTier,
+    String liteRtPerformanceMode = 'auto_fast',
+    bool forceLiteRtCpu = false,
+    bool clearLiteRtCache = false,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
     final runtime = _runtimeFor(modelPath, modelRuntime);
     if (runtime == 'litert') {
-      return _loadLiteRtModel(modelPath, onProgress: onProgress);
+      return _loadLiteRtModel(
+        modelPath,
+        performanceMode: liteRtPerformanceMode,
+        forceCpu: forceLiteRtCpu,
+        clearCache: clearLiteRtCache,
+        onProgress: onProgress,
+      );
     }
 
     _isLiteRt = false;
@@ -127,11 +141,15 @@ class InferenceEngine {
       gpuName: gpuNameStr,
       gpuLayers: gpuLayers,
       runtime: 'llama',
+      backend: gpuLayers > 0 ? 'gpu' : 'cpu',
     );
   }
 
   Future<LoadResult> _loadLiteRtModel(
     String modelPath, {
+    required String performanceMode,
+    required bool forceCpu,
+    required bool clearCache,
     void Function(double)? onProgress,
   }) async {
     if (!Platform.isAndroid) {
@@ -144,11 +162,9 @@ class InferenceEngine {
 
     try {
       onProgress?.call(0.05);
-      // Clear the cache directory to prevent OpenCL delegate crashes 
-      // from corrupted serialized context data.
       final tempDir = await getTemporaryDirectory();
       final cacheDir = Directory('${tempDir.path}/litert_cache');
-      if (await cacheDir.exists()) {
+      if (clearCache && await cacheDir.exists()) {
         try {
           await cacheDir.delete(recursive: true);
         } catch (_) {}
@@ -156,27 +172,47 @@ class InferenceEngine {
       await cacheDir.create(recursive: true);
       onProgress?.call(0.18);
 
-      _liteEngine = await LiteLmEngine.create(
-        LiteLmEngineConfig(
-          modelPath: modelPath,
-          backend: LiteLmBackend.cpu,
-          cacheDir: cacheDir.path,
-        ),
+      final backend = forceCpu || performanceMode == 'cpu_safe'
+          ? LiteLmBackend.cpu
+          : LiteLmBackend.gpu;
+      final backendLabel = backend == LiteLmBackend.gpu ? 'GPU' : 'CPU';
+
+      _liteEngine = await _createLiteRtEngine(
+        modelPath: modelPath,
+        cacheDir: cacheDir.path,
+        backend: backend,
       );
       _hasLoadedModel = true;
       onProgress?.call(0.92);
-      print('[Inference] LiteRT-LM loaded with CPU backend');
+      print('[Inference] LiteRT-LM loaded with $backendLabel backend');
       return LoadResult(
         success: true,
-        message: 'LiteRT-LM model loaded (CPU backend).',
-        gpuName: '',
-        gpuLayers: 0,
+        message: 'LiteRT-LM model loaded ($backendLabel backend).',
+        gpuName: backend == LiteLmBackend.gpu ? 'LiteRT GPU' : '',
+        gpuLayers: backend == LiteLmBackend.gpu ? 1 : 0,
         runtime: 'litert',
+        backend: backend.name,
       );
     } catch (error) {
-      print('[Inference] LiteRT-LM CPU load failed: $error');
+      print('[Inference] LiteRT-LM load failed: $error');
       rethrow;
     }
+  }
+
+  Future<LiteLmEngine> _createLiteRtEngine({
+    required String modelPath,
+    required String cacheDir,
+    required LiteLmBackend backend,
+  }) {
+    return LiteLmEngine.create(
+      LiteLmEngineConfig(
+        modelPath: modelPath,
+        backend: backend,
+        cacheDir: cacheDir,
+        visionBackend: backend,
+        audioBackend: LiteLmBackend.cpu,
+      ),
+    );
   }
 
   double _normalizeProgress(double progress) {
@@ -193,6 +229,7 @@ class InferenceEngine {
     required int maxTokens,
     required double temperature,
     String? imagePath,
+    String? audioPath,
     void Function(String token)? onToken,
   }) async {
     if (_isLiteRt) {
@@ -202,11 +239,19 @@ class InferenceEngine {
         systemPrompt: systemPrompt,
         maxTokens: maxTokens,
         temperature: temperature,
+        imagePath: imagePath,
+        audioPath: audioPath,
         onToken: onToken,
       );
     }
 
     if (_controller == null) throw Exception('No model loaded');
+    if (imagePath != null && imagePath.isNotEmpty) {
+      return 'GGUF image input is not available in this build yet. This llama runtime is text-only right now: it does not load a matching mmproj vision projector or send image pixels into llama.cpp. Use a LiteRT vision model for image understanding.';
+    }
+    if (audioPath != null && audioPath.isNotEmpty) {
+      return 'GGUF audio input is not available in this build yet. Text files can be read when their content is attached, but audio needs a model/runtime path that supports audio input.';
+    }
 
     final completer = Completer<String>();
     final buffer = StringBuffer();
@@ -314,26 +359,18 @@ class InferenceEngine {
     required String systemPrompt,
     required int maxTokens,
     required double temperature,
+    String? imagePath,
+    String? audioPath,
     void Function(String token)? onToken,
   }) async {
     if (_liteEngine == null) throw Exception('No LiteRT-LM model loaded');
 
     await _subscription?.cancel();
-    try {
-      await _liteConversation?.dispose();
-    } catch (_) {}
-
-    _liteConversation = await _liteEngine!.createConversation(
-      LiteLmConversationConfig(
-        systemInstruction: systemPrompt,
-        initialMessages:
-            _buildLiteRtInitialMessages(prompt, conversationHistory),
-        samplerConfig: LiteLmSamplerConfig(
-          temperature: temperature,
-          topK: 40,
-          topP: 0.95,
-        ),
-      ),
+    await _ensureLiteRtConversation(
+      prompt: prompt,
+      conversationHistory: conversationHistory,
+      systemPrompt: systemPrompt,
+      temperature: temperature,
     );
 
     final completer = Completer<String>();
@@ -354,6 +391,70 @@ class InferenceEngine {
 
     _onStop = () => finish(buffer.toString());
 
+    if ((imagePath != null && imagePath.isNotEmpty) ||
+        (audioPath != null && audioPath.isNotEmpty)) {
+      final contents = <LiteLmContent>[
+        LiteLmContent.text(prompt),
+        if (imagePath != null && imagePath.isNotEmpty)
+          LiteLmContent.imageFile(imagePath),
+        if (audioPath != null && audioPath.isNotEmpty)
+          LiteLmContent.audioFile(audioPath),
+      ];
+
+      _subscription =
+          _liteConversation!.sendMultimodalMessageStream(contents).listen(
+        (delta) {
+          var text = _cleanLiteRtChunk(delta.text);
+          if (text.isEmpty) return;
+
+          if (!hasVisibleOutput) {
+            if (!_hasPrintableText(text)) return;
+            text = text.trimLeft();
+            hasVisibleOutput = true;
+          }
+
+          if (tokenCount == 0) {
+            print('[Inference] LiteRT-LM multimodal FIRST TOKEN received');
+          }
+          _liteConversationHasMessages = true;
+          tokenCount++;
+          buffer.write(text);
+          onToken?.call(text);
+          _idleTimer?.cancel();
+          _idleTimer = Timer(const Duration(seconds: 8), () {
+            print('[Inference] LiteRT-LM multimodal idle timeout - $tokenCount chunks');
+            finish(buffer.toString());
+          });
+        },
+        onDone: () {
+          _liteConversationHasMessages = true;
+          print('[Inference] LiteRT-LM multimodal stream done - $tokenCount chunks');
+          finish(buffer.toString());
+        },
+        onError: (error) {
+          print('[Inference] LiteRT-LM multimodal stream error: $error');
+          finish('ERROR: LiteRT-LM multimodal generation failed - $error');
+        },
+      );
+
+      _idleTimer = Timer(const Duration(seconds: 90), () {
+        if (tokenCount == 0) {
+          finish('ERROR: LiteRT-LM multimodal model did not respond.');
+        }
+      });
+
+      Future.delayed(const Duration(seconds: 240), () {
+        if (!completed) {
+          final partial = buffer.toString();
+          finish(partial.isEmpty
+              ? 'ERROR: LiteRT-LM multimodal generation timed out.'
+              : partial);
+        }
+      });
+
+      return completer.future;
+    }
+
     _subscription = _liteConversation!.sendMessageStream(prompt).listen(
       (delta) {
         var text = _cleanLiteRtChunk(delta.text);
@@ -368,6 +469,7 @@ class InferenceEngine {
         if (tokenCount == 0) {
           print('[Inference] LiteRT-LM FIRST TOKEN received');
         }
+        _liteConversationHasMessages = true;
         tokenCount++;
         buffer.write(text);
         onToken?.call(text);
@@ -378,6 +480,7 @@ class InferenceEngine {
         });
       },
       onDone: () {
+        _liteConversationHasMessages = true;
         print('[Inference] LiteRT-LM stream done - $tokenCount chunks');
         finish(buffer.toString());
       },
@@ -405,22 +508,56 @@ class InferenceEngine {
     return completer.future;
   }
 
+  Future<void> _ensureLiteRtConversation({
+    required String prompt,
+    required List<Map<String, String>>? conversationHistory,
+    required String systemPrompt,
+    required double temperature,
+  }) async {
+    final hasIncomingHistory = conversationHistory != null &&
+        conversationHistory.any((msg) => (msg['content'] ?? '').isNotEmpty);
+    final shouldReset = _liteConversation == null ||
+        _liteConversationSystemPrompt != systemPrompt ||
+        _liteConversationTemperature != temperature ||
+        (_liteConversationHasMessages && !hasIncomingHistory);
+
+    if (!shouldReset) return;
+
+    try {
+      await _liteConversation?.dispose();
+    } catch (_) {}
+
+    _liteConversation = await _liteEngine!.createConversation(
+      LiteLmConversationConfig(
+        systemInstruction: systemPrompt,
+        initialMessages:
+            _buildLiteRtInitialMessages(prompt, conversationHistory),
+        samplerConfig: LiteLmSamplerConfig(
+          temperature: temperature,
+          topK: 64,
+          topP: 0.95,
+        ),
+      ),
+    );
+    _liteConversationSystemPrompt = systemPrompt;
+    _liteConversationTemperature = temperature;
+    _liteConversationHasMessages = hasIncomingHistory;
+  }
+
   Future<void> stop() async {
     if (_disposed) return;
     _idleTimer?.cancel();
-    _subscription?.cancel();
+    final stopCallback = _onStop;
+    _onStop = null;
+    stopCallback?.call();
+    unawaited(_subscription?.cancel() ?? Future<void>.value());
     if (_isLiteRt) {
-      try {
-        await _liteConversation?.dispose();
-      } catch (_) {}
-      _liteConversation = null;
-      _onStop?.call();
+      _liteConversationHasMessages = true;
       return;
     }
     try {
-      await _controller?.stop();
+      await _controller?.stop().timeout(const Duration(milliseconds: 800));
     } catch (_) {}
-    _onStop?.call();
   }
 
   Future<ContextInfo?> getContextInfo() async {
@@ -452,6 +589,9 @@ class InferenceEngine {
     _liteEngine = null;
     _isLiteRt = false;
     _hasLoadedModel = false;
+    _liteConversationSystemPrompt = null;
+    _liteConversationTemperature = null;
+    _liteConversationHasMessages = false;
   }
 
   // ── Helpers ──
@@ -496,9 +636,14 @@ class InferenceEngine {
 
   String _cleanLiteRtChunk(String text) {
     return text
-        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(
+            RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]'),
+            '')
         .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
-        .replaceAll('\uFFFD', '');
+        .replaceAll('\uFFFD', '')
+        .replaceAll('<|endoftext|>', '')
+        .replaceAll('<|im_end|>', '')
+        .replaceAll('<|end|>', '');
   }
 
   bool _hasPrintableText(String text) {

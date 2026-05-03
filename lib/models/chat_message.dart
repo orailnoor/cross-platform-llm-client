@@ -7,6 +7,9 @@ class ChatMessage {
   final String? imagePath;
   final String? fileName;
   final String? fileContent;
+  final String? filePath;
+  final String? fileType;
+  final int? fileSize;
   final String? cmdOutput; // Result of CMD: execution
   final bool isCommand;
   final double? tokensPerSec;
@@ -22,6 +25,9 @@ class ChatMessage {
     this.imagePath,
     this.fileName,
     this.fileContent,
+    this.filePath,
+    this.fileType,
+    this.fileSize,
     this.cmdOutput,
     this.isCommand = false,
     this.tokensPerSec,
@@ -38,6 +44,9 @@ class ChatMessage {
         'imagePath': imagePath,
         'fileName': fileName,
         'fileContent': fileContent,
+        'filePath': filePath,
+        'fileType': fileType,
+        'fileSize': fileSize,
         'cmdOutput': cmdOutput,
         'isCommand': isCommand,
         'tokensPerSec': tokensPerSec,
@@ -54,6 +63,10 @@ class ChatMessage {
         imagePath: map['imagePath'],
         fileName: map['fileName'],
         fileContent: map['fileContent'],
+        filePath: map['filePath'],
+        fileType: map['fileType'],
+        fileSize:
+            map['fileSize'] != null ? (map['fileSize'] as num).toInt() : null,
         cmdOutput: map['cmdOutput'],
         isCommand: map['isCommand'] ?? false,
         tokensPerSec: map['tokensPerSec'] != null

@@ -9,12 +9,14 @@ class LoadResult {
   final String gpuName;
   final int gpuLayers;
   final String runtime;
+  final String backend;
   LoadResult({
     required this.success,
     required this.message,
     this.gpuName = '',
     this.gpuLayers = 0,
     this.runtime = '',
+    this.backend = '',
   });
 }
 
@@ -24,6 +26,9 @@ class InferenceEngine {
     String? modelRuntime,
     required int contextSize,
     required String deviceTier,
+    String liteRtPerformanceMode = 'cpu_safe',
+    bool forceLiteRtCpu = true,
+    bool clearLiteRtCache = false,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(
@@ -40,6 +45,7 @@ class InferenceEngine {
     required int maxTokens,
     required double temperature,
     String? imagePath,
+    String? audioPath,
     void Function(String token)? onToken,
   }) async {
     return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';

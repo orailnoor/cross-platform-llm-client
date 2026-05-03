@@ -136,10 +136,15 @@ class ModelController extends GetxController {
     for (final file in files) {
       if (!existingFilenames.contains(file)) {
         final lower = file.toLowerCase();
-        final isVision = lower.contains('vl-') ||
-            lower.contains('llava') ||
-            lower.contains('vision') ||
-            lower.contains('-vl');
+        final runtime = AiModel.runtimeFromFilename(file);
+        final isLiteRt = runtime == AiModel.runtimeLiteRt;
+        final isVision = isLiteRt &&
+            (lower.contains('vl-') ||
+                lower.contains('llava') ||
+                lower.contains('vision') ||
+                lower.contains('-vl') ||
+                lower.contains('gemma-4') ||
+                lower.contains('gemma4'));
 
         availableModels.add(AiModel(
           name: file,
@@ -147,10 +152,8 @@ class ModelController extends GetxController {
           url: '',
           size: _formatModelSize(file),
           description: 'Imported from local storage',
-          template: AiModel.runtimeFromFilename(file) == AiModel.runtimeLiteRt
-              ? 'litert'
-              : 'chatml',
-          runtime: AiModel.runtimeFromFilename(file),
+          template: isLiteRt ? 'litert' : 'chatml',
+          runtime: runtime,
           isImported: true,
           isVision: isVision,
         ));
@@ -189,21 +192,22 @@ class ModelController extends GetxController {
   }
 
   bool isVisionModel(AiModel model) {
+    if (!isLiteRtModel(model)) return false;
     final lower =
         '${model.name} ${model.filename} ${model.description}'.toLowerCase();
     return model.isVision ||
         lower.contains('vl-') ||
         lower.contains('-vl') ||
         lower.contains('llava') ||
+        lower.contains('gemma-4') ||
+        lower.contains('gemma4') ||
         lower.contains('vision');
   }
 
   bool isUncensoredModel(AiModel model) {
-    final lower =
-        '${model.name} ${model.filename} ${model.description}'.toLowerCase();
-    return lower.contains('uncensored') ||
-        lower.contains('abliterated') ||
-        lower.contains('unrestricted');
+    return AppConstants.isUncensoredModelName(
+      '${model.name} ${model.filename} ${model.description}',
+    );
   }
 
   bool isImageModel(AiModel model) {
@@ -303,7 +307,12 @@ class ModelController extends GetxController {
         resolvedFilename,
         template: template.trim().isEmpty ? 'chatml' : template.trim(),
       ),
-      isVision: isVision,
+      isVision: isVision &&
+          AiModel.runtimeFromFilename(
+            resolvedFilename,
+            template: template.trim().isEmpty ? 'chatml' : template.trim(),
+          ) ==
+              AiModel.runtimeLiteRt,
       isCustom: true,
     );
 
@@ -391,19 +400,31 @@ class ModelController extends GetxController {
       return;
     }
     final path = await _download.modelPath(filename);
-    final model = availableModels.firstWhereOrNull((m) => m.filename == filename);
+    final model =
+        availableModels.firstWhereOrNull((m) => m.filename == filename);
+    final isLiteRt = filename.toLowerCase().endsWith('.litertlm') ||
+        model?.runtime == AiModel.runtimeLiteRt;
+    final targetRuntime =
+        model?.runtime ?? AiModel.runtimeFromFilename(filename);
+    if (_inference.requiresAppRestartForRuntime(targetRuntime)) {
+      await _showRuntimeRestartDialog(
+        currentRuntime: _inference.sessionNativeRuntime,
+        targetRuntime: targetRuntime,
+      );
+      return;
+    }
     final fileBytes = await _modelFileBytes(filename, path, model);
     final loadAction = await _confirmModelLoadSafety(
       filename: filename,
       fileBytes: fileBytes,
-      isLiteRt: filename.toLowerCase().endsWith('.litertlm') ||
-          model?.runtime == AiModel.runtimeLiteRt,
+      isLiteRt: isLiteRt,
     );
     if (loadAction == _ModelLoadAction.cancel) return;
     if (loadAction == _ModelLoadAction.unload) {
       await unloadModel();
       return;
     }
+    if (isLiteRt && !await _confirmLiteRtGpuWarning()) return;
 
     if (isImageModel(model ?? AiModel(
           name: filename,
@@ -422,10 +443,58 @@ class ModelController extends GetxController {
         modelRuntime: model?.runtime,
       );
       if (_inference.isModelLoaded.value) {
-        _inference.isVisionLoaded.value = model?.isVision ?? false;
+        _inference.isVisionLoaded.value =
+            model == null ? false : isVisionModel(model);
         await _settings.setInferenceMode('local');
       }
       Get.snackbar('Text Model', result, snackPosition: SnackPosition.BOTTOM);
+    }
+  }
+
+  Future<void> _showRuntimeRestartDialog({
+    required String currentRuntime,
+    required String targetRuntime,
+  }) async {
+    final currentLabel = _runtimeLabel(currentRuntime);
+    final targetLabel = _runtimeLabel(targetRuntime);
+    await Get.dialog<void>(
+      AlertDialog(
+        title: const Text('Restart required'),
+        content: Text(
+          'You already used $currentLabel in this app session. '
+          'Switching to $targetLabel without restarting can crash the native runtime.\n\n'
+          'Restart the app, then load this model.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Get.back();
+              try {
+                await _androidImportChannel.invokeMethod('restartApp');
+              } catch (_) {
+                SystemNavigator.pop();
+              }
+            },
+            child: const Text('Restart app'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  String _runtimeLabel(String runtime) {
+    switch (runtime.toLowerCase()) {
+      case AiModel.runtimeLiteRt:
+        return 'LiteRT';
+      case AiModel.runtimeLlama:
+        return 'GGUF';
+      default:
+        return 'local model';
     }
   }
 
@@ -461,9 +530,8 @@ class ModelController extends GetxController {
         : 'Unknown';
     final lower = filename.toLowerCase();
     final hasMeasuredMemory = availableBytes > 0 && fileBytes > 0;
-    final isCriticallyLow =
-        hasMeasuredMemory &&
-            (availableBytes < fileBytes || _isLowMemoryBytes(availableBytes));
+    final isCriticallyLow = hasMeasuredMemory &&
+        (availableBytes < fileBytes || _isLowMemoryBytes(availableBytes));
     final isLargeForRam =
         availableBytes > 0 && fileBytes > 0 && availableBytes < fileBytes * 2;
     final isLowRam = availableBytes > 0 && _isLowMemoryBytes(availableBytes);
@@ -491,7 +559,7 @@ class ModelController extends GetxController {
 
     final result = await Get.dialog<_ModelLoadAction>(
       AlertDialog(
-        title: Text(isCriticallyLow ? 'Low RAM warning' : 'Load model?'),
+        title: Text(isCriticallyLow ? 'Restart recommended' : 'Load model?'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -525,6 +593,18 @@ class ModelController extends GetxController {
               onPressed: () => Get.back(result: _ModelLoadAction.unload),
               child: const Text('Unload'),
             ),
+          if (isCriticallyLow)
+            TextButton(
+              onPressed: () async {
+                Get.back(result: _ModelLoadAction.cancel);
+                try {
+                  await _androidImportChannel.invokeMethod('restartApp');
+                } catch (_) {
+                  SystemNavigator.pop();
+                }
+              },
+              child: const Text('Restart app'),
+            ),
           ElevatedButton(
             onPressed: () async {
               await _refreshAvailableRamGb();
@@ -537,6 +617,47 @@ class ModelController extends GetxController {
       barrierDismissible: false,
     );
     return result ?? _ModelLoadAction.cancel;
+  }
+
+  Future<bool> _confirmLiteRtGpuWarning() async {
+    final mode = _settings.liteRtPerformanceMode.value;
+    if (mode == 'cpu_safe') return true;
+
+    final accepted = _hive.getSetting<bool>(
+          AppConstants.keyLiteRtGpuWarningAccepted,
+          defaultValue: false,
+        ) ??
+        false;
+    if (accepted) return true;
+
+    final modeLabel = mode == 'gpu_fast' ? 'GPU Fast' : 'Auto Fast';
+    final confirmed = await Get.dialog<bool>(
+      AlertDialog(
+        title: Text('$modeLabel LiteRT speed'),
+        content: const Text(
+          'GPU can make LiteRT models much faster, closer to Edge Gallery speed. '
+          'On some phones GPU/OpenCL can crash the app while loading. '
+          'If that happens, Auto Fast will use CPU on the next load.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Get.back(result: true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+
+    if (confirmed == true) {
+      await _hive.setSetting(AppConstants.keyLiteRtGpuWarningAccepted, true);
+      return true;
+    }
+    return false;
   }
 
   bool _isLowMemoryBytes(int bytes) => bytes < 768 * 1024 * 1024;
