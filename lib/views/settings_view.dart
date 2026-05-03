@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
+import '../core/constants.dart';
 import '../services/inference_service.dart';
 import '../services/device_info_service.dart';
 
@@ -14,7 +15,8 @@ class SettingsView extends GetView<SettingsController> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Settings', style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
+        title: Text('Settings',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700)),
       ),
       body: Obx(() => ListView(
             padding: const EdgeInsets.all(16),
@@ -33,18 +35,11 @@ class SettingsView extends GetView<SettingsController> {
               _buildSectionHeader(context, 'INFERENCE MODE'),
               _buildInferenceModeCard(context),
               const SizedBox(height: 20),
+              _buildSectionHeader(context, 'GLOBAL SYSTEM PROMPT'),
+              _buildSystemPromptCard(context),
+              const SizedBox(height: 20),
 
               // ── Cloud API Config ────────────────
-              if (controller.inferenceMode.value == 'cloud') ...[
-                _buildSectionHeader(context, 'CLOUD PROVIDER'),
-                _buildCloudProviderCard(context),
-                const SizedBox(height: 12),
-                _buildApiKeyField(context),
-                const SizedBox(height: 12),
-                _buildModelField(context),
-                const SizedBox(height: 20),
-              ],
-
               // ── Model Parameters (RAM-aware) ─────
               _buildSectionHeader(context, 'MODEL PARAMETERS'),
               _buildSmartSlider(
@@ -56,7 +51,8 @@ class SettingsView extends GetView<SettingsController> {
                 divisions: 20,
                 safeMax: 1.0,
                 onChanged: (v) => controller.setTemperature(v),
-                warningMessage: 'High temperature = unpredictable, rambling output!',
+                warningMessage:
+                    'High temperature = unpredictable, rambling output!',
                 icon: Icons.thermostat,
               ),
               _buildSmartSlider(
@@ -69,7 +65,8 @@ class SettingsView extends GetView<SettingsController> {
                 safeMax: Get.find<DeviceInfoService>().maxSafeTokens.toDouble(),
                 onChanged: (v) => controller.setMaxTokens(v.toInt()),
                 displayValue: controller.maxTokens.value.toString(),
-                warningMessage: 'Your phone only has ${Get.find<DeviceInfoService>().totalRamGB.value.toStringAsFixed(0)}GB RAM! This WILL crash! 💀',
+                warningMessage:
+                    'Your phone only has ${Get.find<DeviceInfoService>().totalRamGB.value.toStringAsFixed(0)}GB RAM! This WILL crash! 💀',
                 icon: Icons.token,
               ),
               _buildSmartSlider(
@@ -79,15 +76,15 @@ class SettingsView extends GetView<SettingsController> {
                 min: 512,
                 max: 8192,
                 divisions: 15,
-                safeMax: Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
+                safeMax:
+                    Get.find<DeviceInfoService>().maxSafeContextSize.toDouble(),
                 onChanged: (v) => controller.setContextSize(v.toInt()),
                 displayValue: controller.contextSize.value.toString(),
-                warningMessage: 'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
+                warningMessage:
+                    'Context this large will eat all your RAM! Your phone will FREEZE! 🥶',
                 icon: Icons.memory,
               ),
               const SizedBox(height: 20),
-
-
 
               // ── About ───────────────────────────
               _buildSectionHeader(context, 'ABOUT'),
@@ -104,16 +101,22 @@ class SettingsView extends GetView<SettingsController> {
         padding: const EdgeInsets.all(4),
         child: Column(
           children: [
-            for (final mode in [ThemeMode.light, ThemeMode.dark, ThemeMode.system])
+            for (final mode in [
+              ThemeMode.light,
+              ThemeMode.dark,
+              ThemeMode.system
+            ])
               RadioListTile<ThemeMode>(
                 value: mode,
                 groupValue: controller.themeMode.value,
                 onChanged: (v) => controller.setThemeMode(v!),
                 title: Text(
                   _themeModeName(mode),
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500),
                 ),
-                secondary: Icon(_themeModeIcon(mode), color: AppColors.textMuted),
+                secondary:
+                    Icon(_themeModeIcon(mode), color: AppColors.textMuted),
                 activeColor: AppColors.primary,
                 dense: true,
               ),
@@ -171,14 +174,16 @@ class SettingsView extends GetView<SettingsController> {
               groupValue: controller.inferenceMode.value,
               onChanged: (v) => controller.setInferenceMode(v!),
               title: Text('Local (On-Device)',
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
               subtitle: Obx(() {
                 final inference = Get.find<InferenceService>();
                 return Text(
                   inference.isModelLoaded.value
                       ? 'Active: ${inference.loadedModelName.value}'
                       : 'No model loaded',
-                  style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+                  style: GoogleFonts.inter(
+                      fontSize: 12, color: Theme.of(context).hintColor),
                 );
               }),
               activeColor: AppColors.primary,
@@ -189,10 +194,12 @@ class SettingsView extends GetView<SettingsController> {
               groupValue: controller.inferenceMode.value,
               onChanged: (v) => controller.setInferenceMode(v!),
               title: Text('Cloud API',
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500)),
+                  style: GoogleFonts.inter(
+                      fontSize: 14, fontWeight: FontWeight.w500)),
               subtitle: Text(
                 controller.cloudProvider.value.toUpperCase(),
-                style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+                style: GoogleFonts.inter(
+                    fontSize: 12, color: Theme.of(context).hintColor),
               ),
               activeColor: AppColors.secondary,
               dense: true,
@@ -203,106 +210,36 @@ class SettingsView extends GetView<SettingsController> {
     );
   }
 
-  Widget _buildCloudProviderCard(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          children: [
-            for (final provider in ['kimi', 'openai', 'anthropic', 'google'])
-              RadioListTile<String>(
-                value: provider,
-                groupValue: controller.cloudProvider.value,
-                onChanged: (v) => controller.setCloudProvider(v!),
-                title: Text(
-                  _providerName(provider),
-                  style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
-                ),
-                activeColor: AppColors.primary,
-                dense: true,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildApiKeyField(BuildContext context) {
-    final provider = controller.cloudProvider.value;
-    final textController = controller.apiKeyControllerFor(provider);
-
+  Widget _buildSystemPromptCard(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('API Key',
-                style: GoogleFonts.inter(
-                    fontSize: 13, fontWeight: FontWeight.w500, color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: textController,
-              obscureText: true,
-              style: GoogleFonts.firaCode(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Enter ${_providerName(provider)} API key',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.save, size: 18),
-                  onPressed: () {
-                    controller.cancelApiKeyDebounce();
-                    controller.setApiKey(provider, textController.text);
-                  },
-                ),
+            Text(
+              'Applies to local and cloud models',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                color: Theme.of(context).hintColor,
               ),
-              onSubmitted: (v) {
-                controller.cancelApiKeyDebounce();
-                controller.setApiKey(provider, v);
-              },
-              onChanged: (v) {
-                controller.debouncedSetApiKey(provider, v);
-              },
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModelField(BuildContext context) {
-    final provider = controller.cloudProvider.value;
-    final textController = controller.modelControllerFor(provider);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Model Name',
-                style: GoogleFonts.inter(
-                    fontSize: 13, fontWeight: FontWeight.w500, color: Theme.of(context).textTheme.bodyMedium?.color ?? Colors.grey)),
             const SizedBox(height: 8),
             TextField(
-              controller: textController,
-              style: GoogleFonts.firaCode(fontSize: 13),
+              controller: controller.globalSystemPromptController,
+              minLines: 3,
+              maxLines: 6,
+              style: GoogleFonts.inter(fontSize: 13),
               decoration: InputDecoration(
-                hintText: 'e.g., gpt-4o-mini',
+                hintText: AppConstants.systemPrompt,
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.save, size: 18),
-                  onPressed: () {
-                    controller.cancelModelDebounce();
-                    controller.setCloudModel(provider, textController.text);
-                  },
+                  onPressed: () => controller.setGlobalSystemPrompt(
+                    controller.globalSystemPromptController.text,
+                  ),
                 ),
               ),
-              onSubmitted: (v) {
-                controller.cancelModelDebounce();
-                controller.setCloudModel(provider, v);
-              },
-              onChanged: (v) {
-                controller.debouncedSetCloudModel(provider, v);
-              },
+              onSubmitted: (value) => controller.setGlobalSystemPrompt(value),
             ),
           ],
         ),
@@ -429,7 +366,8 @@ class SettingsView extends GetView<SettingsController> {
                         fontSize: 13, fontWeight: FontWeight.w500)),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: sliderColor.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -467,10 +405,10 @@ class SettingsView extends GetView<SettingsController> {
                 if (v > safeMax && value <= safeMax) {
                   // Entering danger zone — heavy vibration
                   HapticFeedback.heavyImpact();
-                  Future.delayed(const Duration(milliseconds: 100), () =>
-                      HapticFeedback.heavyImpact());
-                  Future.delayed(const Duration(milliseconds: 200), () =>
-                      HapticFeedback.heavyImpact());
+                  Future.delayed(const Duration(milliseconds: 100),
+                      () => HapticFeedback.heavyImpact());
+                  Future.delayed(const Duration(milliseconds: 200),
+                      () => HapticFeedback.heavyImpact());
                   Get.snackbar(
                     '⚠️ DANGER ZONE',
                     warningMessage,
@@ -490,13 +428,15 @@ class SettingsView extends GetView<SettingsController> {
                 onChanged(v);
               },
               activeColor: sliderColor,
-              inactiveColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              inactiveColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
             // Danger warning banner
             if (isOverLimit)
               Container(
                 margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: sliderColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(6),
@@ -526,9 +466,6 @@ class SettingsView extends GetView<SettingsController> {
     );
   }
 
-
-
-
   Widget _buildAboutCard(BuildContext context) {
     return Card(
       child: Padding(
@@ -547,26 +484,12 @@ class SettingsView extends GetView<SettingsController> {
             const SizedBox(height: 4),
             Text(
               'Intelligent AI Assistant\nv1.0.0 · by orailnoor',
-              style: GoogleFonts.inter(fontSize: 12, color: Theme.of(context).hintColor),
+              style: GoogleFonts.inter(
+                  fontSize: 12, color: Theme.of(context).hintColor),
             ),
           ],
         ),
       ),
     );
-  }
-
-  String _providerName(String key) {
-    switch (key) {
-      case 'openai':
-        return 'OpenAI';
-      case 'anthropic':
-        return 'Anthropic';
-      case 'google':
-        return 'Google Gemini';
-      case 'kimi':
-        return 'Kimi (Moonshot)';
-      default:
-        return key;
-    }
   }
 }

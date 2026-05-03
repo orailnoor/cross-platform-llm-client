@@ -19,6 +19,9 @@ dependencies:
 
   # Local AI Inference (Android)
   llama_flutter_android: ^0.2.0
+  sd_flutter_android:
+    path: local_plugins/sd_flutter_android
+
 
 
   # Networking
@@ -47,6 +50,10 @@ dependencies:
   # Background / Boot Persistence
   flutter_background_service: ^5.0.5
   flutter_local_notifications: ^17.0.0
+  file_picker: ^11.0.2
+  flutter_inappwebview: ^6.1.5
+  image: ^4.8.0
+  flutter_litert_lm: ^0.3.0
 
 dev_dependencies:
   flutter_test:
@@ -59,3 +66,8 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/
+    - assets/webgpu_engine.html
+

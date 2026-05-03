@@ -10,9 +10,20 @@ class DownloadProgress {
   final RxDouble progress = 0.0.obs;
   final RxInt downloadedBytes = 0.obs;
   final RxInt totalBytes = 0.obs;
+  final RxDouble bytesPerSecond = 0.0.obs;
   final RxBool isPaused = false.obs;
+  final DateTime startedAt = DateTime.now();
 
   DownloadProgress({required this.filename});
+
+  Duration? get eta {
+    final speed = bytesPerSecond.value;
+    final total = totalBytes.value;
+    if (speed <= 0 || total <= 0) return null;
+    final remaining = total - downloadedBytes.value;
+    if (remaining <= 0) return Duration.zero;
+    return Duration(seconds: (remaining / speed).ceil());
+  }
 }
 
 /// Service for downloading GGUF model files with progress tracking.
@@ -42,6 +53,16 @@ class DownloadService extends GetxService {
     return await platform_dl.getDownloadedModels(await modelsDir);
   }
 
+  Future<int> getModelSize(String filename) async {
+    if (kIsWeb) return 0;
+    return await platform_dl.getModelSize(await modelPath(filename));
+  }
+
+  Future<int> getRemoteFileSize(String url, {String? authToken}) async {
+    if (kIsWeb) return 0;
+    return await platform_dl.getRemoteFileSize(url, authToken: authToken);
+  }
+
   Future<String> downloadModel({
     required String url,
     required String filename,
@@ -61,6 +82,12 @@ class DownloadService extends GetxService {
         onProgress: (received, total) {
           downloadProgress.downloadedBytes.value = received;
           downloadProgress.totalBytes.value = total;
+          final elapsed = DateTime.now()
+              .difference(downloadProgress.startedAt)
+              .inMilliseconds;
+          if (elapsed > 0) {
+            downloadProgress.bytesPerSecond.value = received / (elapsed / 1000);
+          }
           if (total > 0) {
             downloadProgress.progress.value = received / total;
           }
@@ -91,5 +118,26 @@ class DownloadService extends GetxService {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  static String formatWholeMb(int bytes) {
+    if (bytes <= 0) return '0 MB';
+    final mb = (bytes / (1024 * 1024)).round().clamp(1, 1 << 31);
+    return '$mb MB';
+  }
+
+  static String formatSpeed(double bytesPerSecond) {
+    return '${formatBytes(bytesPerSecond.round())}/s';
+  }
+
+  static String formatDuration(Duration? duration) {
+    if (duration == null) return '--';
+    if (duration.inHours > 0) {
+      return '${duration.inHours}h ${duration.inMinutes.remainder(60)}m';
+    }
+    if (duration.inMinutes > 0) {
+      return '${duration.inMinutes}m ${duration.inSeconds.remainder(60)}s';
+    }
+    return '${duration.inSeconds}s';
   }
 }

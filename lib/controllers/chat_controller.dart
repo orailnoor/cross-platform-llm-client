@@ -1,15 +1,21 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
+import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
 import '../services/cloud_service.dart';
+import '../services/local_image_service.dart';
+import '../services/app_log_service.dart';
+import '../utils/thought_parser.dart';
 
 class ChatController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -23,6 +29,8 @@ class ChatController extends GetxController {
   final inputText = ''.obs;
   final selectedImagePath = Rxn<String>();
   final selectedImageBase64 = Rxn<String>();
+  final selectedFileName = Rxn<String>();
+  final selectedFileContent = Rxn<String>();
 
   // Real-time streaming state — the AI response as it's being generated
   final streamingResponse = ''.obs;
@@ -65,6 +73,10 @@ class ChatController extends GetxController {
     final raw = _hive.getMessagesForChat(sessionId);
     messages.value = raw.map((m) => ChatMessage.fromMap(m)).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final inference = Get.find<InferenceService>();
+    if (inference.isModelLoaded.value) {
+      inference.refreshContextInfo();
+    }
     _scrollToBottom();
   }
 
@@ -99,11 +111,68 @@ class ChatController extends GetxController {
     selectedImageBase64.value = null;
   }
 
+  Future<void> pickFile() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: [
+          'txt',
+          'md',
+          'json',
+          'csv',
+          'log',
+          'yaml',
+          'yml',
+          'xml',
+          'dart',
+          'kt',
+          'java',
+          'js',
+          'ts',
+          'py'
+        ],
+        withData: kIsWeb,
+      );
+      if (result == null) return;
+      final file = result.files.single;
+      String content;
+      if (file.bytes != null) {
+        content = utf8.decode(file.bytes!, allowMalformed: true);
+      } else if (file.path != null) {
+        content = await File(file.path!).readAsString();
+      } else {
+        return;
+      }
+      if (content.length > 12000) {
+        content =
+            '${content.substring(0, 12000)}\n\n[File truncated for context size]';
+      }
+      selectedFileName.value = file.name;
+      selectedFileContent.value = content;
+    } catch (e) {
+      Get.find<AppLogService>().warning('File attachment failed', details: e);
+      Get.snackbar('File not attached', '$e',
+          snackPosition: SnackPosition.BOTTOM);
+    }
+  }
+
+  void clearFile() {
+    selectedFileName.value = null;
+    selectedFileContent.value = null;
+  }
+
   // ─── Send Message ───────────────────────────────
 
   Future<void> sendMessage() async {
+    if (isLoading.value || isStreaming.value) return;
+
     final text = textController.text.trim();
     if (text.isEmpty) return;
+    final fileName = selectedFileName.value;
+    final fileContent = selectedFileContent.value;
+    final effectiveText = fileContent == null
+        ? text
+        : '$text\n\nAttached file: $fileName\n```text\n$fileContent\n```';
 
     // Create a session if none selected
     if (currentSessionId.value.isEmpty) {
@@ -115,9 +184,11 @@ class ChatController extends GetxController {
       id: _uuid.v4(),
       chatId: currentSessionId.value,
       role: 'user',
-      content: text,
+      content: effectiveText,
       imageBase64: selectedImageBase64.value,
       imagePath: selectedImagePath.value,
+      fileName: fileName,
+      fileContent: fileContent,
     );
     messages.add(userMsg);
     _hive.saveMessage(userMsg.id, userMsg.toMap());
@@ -127,12 +198,14 @@ class ChatController extends GetxController {
     inputText.value = '';
     final imgBase64 = selectedImageBase64.value;
     clearImage();
+    clearFile();
     _scrollToBottom();
 
     // Update session title (use first message as title)
     if (messages.where((m) => m.role == 'user').length == 1) {
       final title = text.length > 40 ? '${text.substring(0, 40)}...' : text;
-      final session = sessions.firstWhere((s) => s.id == currentSessionId.value);
+      final session =
+          sessions.firstWhere((s) => s.id == currentSessionId.value);
       final updated = session.copyWith(title: title, lastMessage: text);
       _hive.saveSession(updated.id, updated.toMap());
       final idx = sessions.indexWhere((s) => s.id == updated.id);
@@ -146,6 +219,23 @@ class ChatController extends GetxController {
     _scrollToBottom();
 
     try {
+      DateTime? thoughtStartedAt;
+      int? thoughtDurationSeconds;
+
+      void trackThoughtTiming() {
+        final parts = splitThoughtTags(streamingResponse.value);
+        if (parts.hasThought && parts.isThinking && thoughtStartedAt == null) {
+          thoughtStartedAt = DateTime.now();
+        }
+        if (parts.hasThought &&
+            !parts.isThinking &&
+            thoughtStartedAt != null &&
+            thoughtDurationSeconds == null) {
+          thoughtDurationSeconds =
+              DateTime.now().difference(thoughtStartedAt!).inSeconds;
+        }
+      }
+
       final inferenceMode = _hive.getSetting(
             AppConstants.keyInferenceMode,
             defaultValue: 'cloud',
@@ -157,36 +247,53 @@ class ChatController extends GetxController {
       // Build conversation history
       final history = messages
           .where((m) => m.role == 'user' || m.role == 'assistant')
-          .map((m) => {'role': m.role, 'content': m.content})
+          .map((m) => {
+                'role': m.role,
+                'content': m.role == 'assistant'
+                    ? splitThoughtTags(m.content).answer
+                    : m.content,
+              })
           .toList();
 
       if (inferenceMode == 'local') {
-        final inference = Get.find<InferenceService>();
+        final localImage = Get.find<LocalImageService>();
 
-        // Local models can't process images
-        if (imgBase64 != null) {
-          final warningMsg = ChatMessage(
-            id: _uuid.v4(),
-            chatId: currentSessionId.value,
-            role: 'assistant',
-            content: '⚠️ Local models don\'t support image analysis. Switch to Cloud mode for vision support.',
+        if (localImage.isModelLoaded.value) {
+          // Local image generation
+          final pngBytes = await localImage.generateImage(
+            prompt: text,
+            onProgress: (step, total) {
+              streamingResponse.value = 'Generating locally... ($step/$total)';
+              trackThoughtTiming();
+              _scrollToBottom();
+            },
           );
-          messages.add(warningMsg);
-          _hive.saveMessage(warningMsg.id, warningMsg.toMap());
-          _scrollToBottom();
-        }
 
-        rawResponse = await inference.generate(
-          prompt: text,
-          systemPrompt: _effectiveSystemPrompt,
-          conversationHistory: history,
-          source: 'chat',
-          onToken: (token) {
-            // Real-time streaming update
-            streamingResponse.value += token;
-            _scrollToBottom();
-          },
-        );
+          if (pngBytes != null) {
+            rawResponse = '[IMAGE_BASE64]${base64Encode(pngBytes)}';
+          } else {
+            rawResponse = '❌ Local image generation failed.';
+          }
+        } else {
+          final inference = Get.find<InferenceService>();
+
+          // Local models support image analysis if it's a vision model (e.g. Qwen2-VL)
+          // We pass the image path directly to the inference service below.
+
+          rawResponse = await inference.generate(
+            prompt: effectiveText,
+            systemPrompt: _effectiveSystemPrompt,
+            conversationHistory: history,
+            source: 'chat',
+            imagePath: selectedImagePath.value,
+            onToken: (token) {
+              // Real-time streaming update
+              streamingResponse.value += token;
+              trackThoughtTiming();
+              _scrollToBottom();
+            },
+          );
+        }
       } else {
         final cloud = Get.find<CloudService>();
         final apiMessages = [
@@ -196,12 +303,31 @@ class ChatController extends GetxController {
         rawResponse = await cloud.sendMessage(
           messages: apiMessages,
           imageBase64: imgBase64,
+          onToken: (token) {
+            streamingResponse.value += token;
+            trackThoughtTiming();
+            _scrollToBottom();
+          },
         );
       }
 
+      if (thoughtStartedAt != null && thoughtDurationSeconds == null) {
+        thoughtDurationSeconds =
+            DateTime.now().difference(thoughtStartedAt!).inSeconds;
+      }
+
       // Stop streaming UI
+      final tps = inferenceMode == 'local'
+          ? Get.find<InferenceService>().tokensPerSecond.value
+          : null;
       isStreaming.value = false;
       streamingResponse.value = '';
+
+      String? outImageBase64;
+      if (rawResponse.startsWith('[IMAGE_BASE64]')) {
+        outImageBase64 = rawResponse.substring('[IMAGE_BASE64]'.length);
+        rawResponse = 'Here is your generated image:';
+      }
 
       // Display response directly (no command processing)
       final aiMsg = ChatMessage(
@@ -209,6 +335,9 @@ class ChatController extends GetxController {
         chatId: currentSessionId.value,
         role: 'assistant',
         content: rawResponse,
+        imageBase64: outImageBase64,
+        tokensPerSec: tps,
+        thoughtDurationSeconds: thoughtDurationSeconds,
       );
       messages.add(aiMsg);
       _hive.saveMessage(aiMsg.id, aiMsg.toMap());
@@ -225,6 +354,7 @@ class ChatController extends GetxController {
     } catch (e) {
       isStreaming.value = false;
       streamingResponse.value = '';
+      Get.find<AppLogService>().error('Chat response failed', details: e);
       final errorMsg = ChatMessage(
         id: _uuid.v4(),
         chatId: currentSessionId.value,
@@ -252,28 +382,7 @@ class ChatController extends GetxController {
   }
 
   String get _effectiveSystemPrompt {
-    final inferenceMode = _hive.getSetting(
-          AppConstants.keyInferenceMode,
-          defaultValue: 'cloud',
-        ) ??
-        'cloud';
-
-    String modelName = '';
-    if (inferenceMode == 'local') {
-      modelName = _hive.getSetting<String>(AppConstants.keyLocalModelName) ?? '';
-    } else {
-      final provider = _hive.getSetting(AppConstants.keyCloudProvider) ?? 'kimi';
-      modelName = _hive.getSetting(provider == 'openai' ? AppConstants.keyOpenaiModel : 
-                                 provider == 'anthropic' ? AppConstants.keyAnthropicModel :
-                                 provider == 'google' ? AppConstants.keyGoogleModel : AppConstants.keyKimiModel) ?? '';
-    }
-
-    final lower = modelName.toLowerCase();
-    if (lower.contains('uncensored') || lower.contains('abliterated') || lower.contains('dolphin')) {
-      // Uncensored models work best with NO system prompt (like in Termux/llama-server)
-      // to avoid triggering residual safety alignment.
-      return '';
-    }
-    return AppConstants.systemPrompt;
+    final settings = Get.find<SettingsController>();
+    return settings.globalSystemPrompt.value;
   }
 }

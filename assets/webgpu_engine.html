@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WebGPU Image Engine</title>
+    <script type="module">
+        import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/transformers.min.js';
+
+        let pipe = null;
+        let isReady = false;
+
+        async function init() {
+            try {
+                window.flutter_inappwebview.callHandler('onLog', 'Initializing WebGPU Pipeline (v3)...');
+                
+                pipe = await pipeline('text-to-image', 'Xenova/dreamshaper-8-lcm', {
+                    device: 'webgpu', 
+                });
+
+                isReady = true;
+                window.flutter_inappwebview.callHandler('onReady', true);
+                window.flutter_inappwebview.callHandler('onLog', 'WebGPU Image Engine Ready.');
+            } catch (e) {
+                window.flutter_inappwebview.callHandler('onLog', 'Init Error: ' + e.message);
+                try {
+                    window.flutter_inappwebview.callHandler('onLog', 'Falling back to WASM...');
+                    pipe = await pipeline('text-to-image', 'Xenova/dreamshaper-8-lcm');
+                    isReady = true;
+                    window.flutter_inappwebview.callHandler('onReady', true);
+                } catch (err) {
+                    window.flutter_inappwebview.callHandler('onLog', 'Fatal Error: ' + err.message);
+                }
+            }
+        }
+
+        window.generateImage = async (prompt, negativePrompt, steps) => {
+            if (!isReady) return;
+            
+            try {
+                window.flutter_inappwebview.callHandler('onLog', 'Generating: ' + prompt);
+                
+                const output = await pipe(prompt, {
+                    negative_prompt: negativePrompt,
+                    num_inference_steps: steps || 4, 
+                    callback_on_step_end: (p, step_index, timestep, callback_kwargs) => {
+                        window.flutter_inappwebview.callHandler('onProgress', {
+                            step: step_index + 1, 
+                            total: steps || 4
+                        });
+                        return callback_kwargs;
+                    }
+                });
+
+                // Convert RawImage to Canvas
+                const image = output.images[0];
+                const canvas = document.createElement('canvas');
+                canvas.width = image.width;
+                canvas.height = image.height;
+                const ctx = canvas.getContext('2d');
+                
+                // image.data is typically a Uint8ClampedArray for browser consumption
+                const imgData = new ImageData(
+                    new Uint8ClampedArray(image.data),
+                    image.width,
+                    image.height
+                );
+                ctx.putImageData(imgData, 0, 0);
+                
+                const base64 = canvas.toDataURL('image/png');
+                window.flutter_inappwebview.callHandler('onResult', base64);
+            } catch (e) {
+                window.flutter_inappwebview.callHandler('onLog', 'Generation Error: ' + e.message);
+                window.flutter_inappwebview.callHandler('onError', e.message);
+            }
+        };
+
+        window.addEventListener("flutterInAppWebViewPlatformReady", function(event) {
+            init();
+        });
+    </script>
+</head>
+<body style="background: black; color: white; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+    <div id="status">WebGPU Engine Standby</div>
+</body>
+</html>

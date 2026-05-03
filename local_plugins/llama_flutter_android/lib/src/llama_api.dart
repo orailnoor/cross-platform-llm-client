@@ -32,10 +32,14 @@ class ModelConfig {
     required this.nThreads,
     required this.contextSize,
     this.nGpuLayers,
+    this.mmprojPath,
   });
 
   /// Absolute path to the `.gguf` model file on device storage.
   String modelPath;
+
+  /// Absolute path to the vision projector file (`mmproj`) for VL models.
+  String? mmprojPath;
 
   /// Number of CPU threads to use for inference.
   int nThreads;
@@ -54,6 +58,7 @@ class ModelConfig {
       nThreads,
       contextSize,
       nGpuLayers,
+      mmprojPath,
     ];
   }
 
@@ -64,6 +69,7 @@ class ModelConfig {
       nThreads: result[1]! as int,
       contextSize: result[2]! as int,
       nGpuLayers: result[3] as int?,
+      mmprojPath: result[4] as String?,
     );
   }
 }
@@ -73,6 +79,7 @@ class ChatMessage {
   ChatMessage({
     required this.role,
     required this.content,
+    this.imagePath,
   });
 
   /// Role of the message sender: `'system'`, `'user'`, or `'assistant'`.
@@ -81,10 +88,14 @@ class ChatMessage {
   /// Text content of the message.
   String content;
 
+  /// Absolute path to an image file for vision-language models.
+  String? imagePath;
+
   Object encode() {
     return <Object?>[
       role,
       content,
+      imagePath,
     ];
   }
 
@@ -93,6 +104,7 @@ class ChatMessage {
     return ChatMessage(
       role: result[0]! as String,
       content: result[1]! as String,
+      imagePath: result[2] as String?,
     );
   }
 }

@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../controllers/home_controller.dart';
 import '../core/colors.dart';
 import 'chat_view.dart';
-import 'task_view.dart';
+import 'log_view.dart';
 import 'model_view.dart';
 import 'settings_view.dart';
 
@@ -13,10 +13,20 @@ class HomeView extends GetView<HomeController> {
   const HomeView({super.key});
 
   static const _tabs = [
-    _NavItem(icon: Icons.chat_bubble_outline, activeIcon: Icons.chat_bubble, label: 'Chat'),
-    _NavItem(icon: Icons.bolt_outlined, activeIcon: Icons.bolt, label: 'Tasks'),
-    _NavItem(icon: Icons.download_outlined, activeIcon: Icons.download, label: 'Models'),
-    _NavItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+    _NavItem(
+        icon: Icons.chat_bubble_outline,
+        activeIcon: Icons.chat_bubble,
+        label: 'Chat'),
+    _NavItem(
+        icon: Icons.download_outlined,
+        activeIcon: Icons.download,
+        label: 'Models'),
+    _NavItem(
+        icon: Icons.article_outlined, activeIcon: Icons.article, label: 'Logs'),
+    _NavItem(
+        icon: Icons.settings_outlined,
+        activeIcon: Icons.settings,
+        label: 'Settings'),
   ];
 
   bool get _isWide {
@@ -34,8 +44,8 @@ class HomeView extends GetView<HomeController> {
           index: controller.currentTab.value,
           children: const [
             ChatView(),
-            TaskView(),
             ModelView(),
+            LogView(),
             SettingsView(),
           ],
         );
@@ -52,9 +62,7 @@ class HomeView extends GetView<HomeController> {
 
         return content;
       }),
-      bottomNavigationBar: _isWide
-          ? null
-          : Obx(() => _buildBottomNav(context)),
+      bottomNavigationBar: _isWide ? null : Obx(() => _buildBottomNav(context)),
     );
   }
 
@@ -83,8 +91,10 @@ class HomeView extends GetView<HomeController> {
   Widget _buildSidebar(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final selectedColor = theme.bottomNavigationBarTheme.selectedItemColor ?? AppColors.primary;
-    final unselectedColor = theme.bottomNavigationBarTheme.unselectedItemColor ?? theme.hintColor;
+    final selectedColor =
+        theme.bottomNavigationBarTheme.selectedItemColor ?? AppColors.primary;
+    final unselectedColor =
+        theme.bottomNavigationBarTheme.unselectedItemColor ?? theme.hintColor;
     final bg = isDark ? const Color(0xFF14141F) : const Color(0xFFFFFFFF);
 
     return Container(
@@ -113,7 +123,8 @@ class HomeView extends GetView<HomeController> {
                   final color = isSelected ? selectedColor : unselectedColor;
 
                   return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: Material(
                       color: isSelected
                           ? selectedColor.withValues(alpha: 0.12)
@@ -137,7 +148,9 @@ class HomeView extends GetView<HomeController> {
                                 tab.label,
                                 style: GoogleFonts.inter(
                                   fontSize: 10,
-                                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
                                   color: color,
                                 ),
                               ),
