@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
 import '../models/chat_message.dart';
@@ -57,14 +58,20 @@ class ChatBubble extends StatelessWidget {
               ),
 
             // Message content
-            SelectableText(
-              visibleContent,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: Theme.of(context).colorScheme.onSurface,
-                height: 1.4,
-              ),
-            ),
+            isUser
+                ? SelectableText(
+                    visibleContent,
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      height: 1.4,
+                    ),
+                  )
+                : MarkdownBody(
+                    data: visibleContent,
+                    selectable: true,
+                    styleSheet: _markdownStyle(context),
+                  ),
             if (message.fileName != null) ...[
               const SizedBox(height: 8),
               Container(
@@ -74,7 +81,7 @@ class ChatBubble extends StatelessWidget {
                   color: Theme.of(context)
                       .colorScheme
                       .surfaceContainerHighest
-                      .withOpacity(0.55),
+                      .withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -109,7 +116,7 @@ class ChatBubble extends StatelessWidget {
                     '⚡ ${message.tokensPerSec!.toStringAsFixed(1)} tok/s',
                     style: GoogleFonts.firaCode(
                       fontSize: 9,
-                      color: Theme.of(context).hintColor.withOpacity(0.6),
+                      color: Theme.of(context).hintColor.withValues(alpha: 0.6),
                       fontWeight: FontWeight.w500,
                     ),
                   )
@@ -133,6 +140,31 @@ class ChatBubble extends StatelessWidget {
   Color _getBubbleColor(BuildContext context) {
     if (message.role == 'user') return AppTheme.userBubbleColor(context);
     return AppTheme.aiBubbleColor(context);
+  }
+
+  MarkdownStyleSheet _markdownStyle(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    final muted = Theme.of(context).hintColor;
+    final base = GoogleFonts.inter(fontSize: 14, color: color, height: 1.4);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 12,
+        color: color,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      blockquote: base.copyWith(color: muted),
+      blockquoteDecoration: BoxDecoration(
+        border: Border(left: BorderSide(color: muted.withValues(alpha: 0.45))),
+      ),
+    );
   }
 
   String _formatTime(DateTime date) {

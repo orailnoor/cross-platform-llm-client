@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../controllers/chat_controller.dart';
@@ -47,8 +48,14 @@ class ChatView extends GetView<ChatController> {
                             ? settings.stabilityModel.value
                             : provider == 'nvidia'
                                 ? settings.nvidiaModel.value
-                                : settings.kimiModel.value;
-            modelLabel = model;
+                                : provider == 'openrouter'
+                                    ? settings.openRouterModel.value
+                                    : provider == 'custom'
+                                        ? settings.customCloudModel.value
+                                        : settings.kimiModel.value;
+            modelLabel = provider == 'custom' && model.isNotEmpty
+                ? '${settings.customCloudName.value}: $model'
+                : model;
           }
 
           return Padding(
@@ -267,13 +274,10 @@ class ChatView extends GetView<ChatController> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: SelectableText(
-                          text,
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            color: Theme.of(context).colorScheme.onSurface,
-                            height: 1.4,
-                          ),
+                        child: MarkdownBody(
+                          data: text,
+                          selectable: true,
+                          styleSheet: _streamingMarkdownStyle(context),
                         ),
                       ),
                       // Blinking cursor at the end while still generating
@@ -307,6 +311,26 @@ class ChatView extends GetView<ChatController> {
   /// Animated typing dots — shown only during prefill (before first token).
   Widget _buildTypingIndicator(BuildContext context) {
     return const _TypingDots();
+  }
+
+  MarkdownStyleSheet _streamingMarkdownStyle(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    final base = GoogleFonts.inter(fontSize: 14, color: color, height: 1.4);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 12,
+        color: color,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
   }
 
   /// Model loading progress bar.
@@ -368,14 +392,19 @@ class ChatView extends GetView<ChatController> {
           controller.messages.isNotEmpty;
       final isLocal = settings.inferenceMode.value == 'local';
 
-      if (!chatStarted || !isLocal || !inference.isModelLoaded.value) {
+      if (!chatStarted || !isLocal) {
         return const SizedBox.shrink();
       }
 
       final total = inference.contextTokensTotal.value > 0
           ? inference.contextTokensTotal.value
           : settings.contextSize.value;
-      final used = inference.contextTokensUsed.value.clamp(0, total).toInt();
+      final estimatedUsed = _estimateVisibleChatTokens();
+      final used = (inference.contextTokensUsed.value > 0
+              ? inference.contextTokensUsed.value
+              : estimatedUsed)
+          .clamp(0, total)
+          .toInt();
       final available = (total - used).clamp(0, total).toInt();
       final progress =
           total == 0 ? 0.0 : (used / total).clamp(0.0, 1.0).toDouble();
@@ -424,7 +453,9 @@ class ChatView extends GetView<ChatController> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Context tokens',
+                          inference.isModelLoaded.value
+                              ? 'Context tokens'
+                              : 'Estimated context',
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -738,6 +769,14 @@ class ChatView extends GetView<ChatController> {
       return '${(value / 1000).toStringAsFixed(1)}K';
     }
     return value.toString();
+  }
+
+  int _estimateVisibleChatTokens() {
+    final chars = controller.messages.fold<int>(
+      0,
+      (sum, message) => sum + message.content.length,
+    );
+    return (chars / 4).ceil();
   }
 }
 

@@ -17,12 +17,18 @@ class AppConstants {
   static const String keyKimiKey = 'kimi_api_key';
   static const String keyStabilityKey = 'stability_api_key';
   static const String keyNvidiaKey = 'nvidia_api_key';
+  static const String keyOpenRouterKey = 'openrouter_api_key';
+  static const String keyCustomCloudName = 'custom_cloud_name';
+  static const String keyCustomCloudBaseUrl = 'custom_cloud_base_url';
+  static const String keyCustomCloudKey = 'custom_cloud_api_key';
   static const String keyOpenaiModel = 'openai_model';
   static const String keyAnthropicModel = 'anthropic_model';
   static const String keyGoogleModel = 'google_model';
   static const String keyKimiModel = 'kimi_model';
   static const String keyStabilityModel = 'stability_model';
   static const String keyNvidiaModel = 'nvidia_model';
+  static const String keyOpenRouterModel = 'openrouter_model';
+  static const String keyCustomCloudModel = 'custom_cloud_model';
   static const String keyGlobalSystemPrompt = 'global_system_prompt';
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
@@ -177,4 +183,5 @@ class AppConstants {
   static const String stabilityEndpoint =
       'https://api.stability.ai/v2beta/stable-image/generate/sd3';
   static const String nvidiaEndpoint = 'https://integrate.api.nvidia.com/v1';
+  static const String openRouterEndpoint = 'https://openrouter.ai/api/v1';
 }

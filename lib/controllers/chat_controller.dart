@@ -72,6 +72,10 @@ class ChatController extends GetxController {
     final raw = _hive.getMessagesForChat(sessionId);
     messages.value = raw.map((m) => ChatMessage.fromMap(m)).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final inference = Get.find<InferenceService>();
+    if (inference.isModelLoaded.value) {
+      inference.refreshContextInfo();
+    }
     _scrollToBottom();
   }
 
@@ -272,6 +276,10 @@ class ChatController extends GetxController {
         rawResponse = await cloud.sendMessage(
           messages: apiMessages,
           imageBase64: imgBase64,
+          onToken: (token) {
+            streamingResponse.value += token;
+            _scrollToBottom();
+          },
         );
       }
 

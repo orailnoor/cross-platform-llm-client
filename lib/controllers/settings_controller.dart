@@ -21,12 +21,18 @@ class SettingsController extends GetxController {
   final kimiKey = ''.obs;
   final stabilityKey = ''.obs;
   final nvidiaKey = ''.obs;
+  final openRouterKey = ''.obs;
+  final customCloudName = 'Custom API'.obs;
+  final customCloudBaseUrl = ''.obs;
+  final customCloudKey = ''.obs;
   final openaiModel = 'gpt-5.2'.obs;
   final anthropicModel = 'claude-sonnet-4-6'.obs;
   final googleModel = 'gemini-2.5-flash'.obs;
   final kimiModel = 'kimi-k2.6'.obs;
   final stabilityModel = 'sd3.5-flash'.obs;
   final nvidiaModel = 'meta/llama-3.1-8b-instruct'.obs;
+  final openRouterModel = 'openai/gpt-4o-mini'.obs;
+  final customCloudModel = ''.obs;
   final globalSystemPrompt = AppConstants.systemPrompt.obs;
   final nvidiaModels = <String>[].obs;
   final isLoadingNvidiaModels = false.obs;
@@ -41,6 +47,10 @@ class SettingsController extends GetxController {
   final kimiKeyController = TextEditingController();
   final stabilityKeyController = TextEditingController();
   final nvidiaKeyController = TextEditingController();
+  final openRouterKeyController = TextEditingController();
+  final customCloudNameController = TextEditingController();
+  final customCloudBaseUrlController = TextEditingController();
+  final customCloudKeyController = TextEditingController();
   final globalSystemPromptController = TextEditingController();
 
   final openaiModelController = TextEditingController();
@@ -49,6 +59,8 @@ class SettingsController extends GetxController {
   final kimiModelController = TextEditingController();
   final stabilityModelController = TextEditingController();
   final nvidiaModelController = TextEditingController();
+  final openRouterModelController = TextEditingController();
+  final customCloudModelController = TextEditingController();
 
   Timer? _apiKeyDebounceTimer;
   Timer? _modelDebounceTimer;
@@ -67,6 +79,10 @@ class SettingsController extends GetxController {
     kimiKeyController.dispose();
     stabilityKeyController.dispose();
     nvidiaKeyController.dispose();
+    openRouterKeyController.dispose();
+    customCloudNameController.dispose();
+    customCloudBaseUrlController.dispose();
+    customCloudKeyController.dispose();
     globalSystemPromptController.dispose();
     openaiModelController.dispose();
     anthropicModelController.dispose();
@@ -74,6 +90,8 @@ class SettingsController extends GetxController {
     kimiModelController.dispose();
     stabilityModelController.dispose();
     nvidiaModelController.dispose();
+    openRouterModelController.dispose();
+    customCloudModelController.dispose();
     _apiKeyDebounceTimer?.cancel();
     _modelDebounceTimer?.cancel();
     super.onClose();
@@ -94,6 +112,14 @@ class SettingsController extends GetxController {
     kimiKey.value = _hive.getSetting(AppConstants.keyKimiKey) ?? '';
     stabilityKey.value = _hive.getSetting(AppConstants.keyStabilityKey) ?? '';
     nvidiaKey.value = _hive.getSetting(AppConstants.keyNvidiaKey) ?? '';
+    openRouterKey.value = _hive.getSetting(AppConstants.keyOpenRouterKey) ?? '';
+    customCloudName.value = _hive.getSetting(AppConstants.keyCustomCloudName,
+            defaultValue: 'Custom API') ??
+        'Custom API';
+    customCloudBaseUrl.value =
+        _hive.getSetting(AppConstants.keyCustomCloudBaseUrl) ?? '';
+    customCloudKey.value =
+        _hive.getSetting(AppConstants.keyCustomCloudKey) ?? '';
     openaiModel.value = _hive.getSetting(AppConstants.keyOpenaiModel,
             defaultValue: 'gpt-5.2') ??
         'gpt-5.2';
@@ -112,6 +138,11 @@ class SettingsController extends GetxController {
     nvidiaModel.value = _hive.getSetting(AppConstants.keyNvidiaModel,
             defaultValue: 'meta/llama-3.1-8b-instruct') ??
         'meta/llama-3.1-8b-instruct';
+    openRouterModel.value = _hive.getSetting(AppConstants.keyOpenRouterModel,
+            defaultValue: 'openai/gpt-4o-mini') ??
+        'openai/gpt-4o-mini';
+    customCloudModel.value =
+        _hive.getSetting(AppConstants.keyCustomCloudModel) ?? '';
     globalSystemPrompt.value = _hive.getSetting(
             AppConstants.keyGlobalSystemPrompt,
             defaultValue: AppConstants.systemPrompt) ??
@@ -133,6 +164,10 @@ class SettingsController extends GetxController {
     kimiKeyController.text = kimiKey.value;
     stabilityKeyController.text = stabilityKey.value;
     nvidiaKeyController.text = nvidiaKey.value;
+    openRouterKeyController.text = openRouterKey.value;
+    customCloudNameController.text = customCloudName.value;
+    customCloudBaseUrlController.text = customCloudBaseUrl.value;
+    customCloudKeyController.text = customCloudKey.value;
     globalSystemPromptController.text = globalSystemPrompt.value;
 
     openaiModelController.text = openaiModel.value;
@@ -141,6 +176,8 @@ class SettingsController extends GetxController {
     kimiModelController.text = kimiModel.value;
     stabilityModelController.text = stabilityModel.value;
     nvidiaModelController.text = nvidiaModel.value;
+    openRouterModelController.text = openRouterModel.value;
+    customCloudModelController.text = customCloudModel.value;
   }
 
   TextEditingController apiKeyControllerFor(String provider) {
@@ -155,6 +192,10 @@ class SettingsController extends GetxController {
         return stabilityKeyController;
       case 'nvidia':
         return nvidiaKeyController;
+      case 'openrouter':
+        return openRouterKeyController;
+      case 'custom':
+        return customCloudKeyController;
       default:
         return openaiKeyController;
     }
@@ -172,6 +213,10 @@ class SettingsController extends GetxController {
         return stabilityModelController;
       case 'nvidia':
         return nvidiaModelController;
+      case 'openrouter':
+        return openRouterModelController;
+      case 'custom':
+        return customCloudModelController;
       default:
         return openaiModelController;
     }
@@ -221,6 +266,16 @@ class SettingsController extends GetxController {
         await _hive.setSetting(AppConstants.keyNvidiaKey, trimmed);
         await refreshNvidiaModels();
         break;
+      case 'openrouter':
+        openRouterKey.value = trimmed;
+        openRouterKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyOpenRouterKey, trimmed);
+        break;
+      case 'custom':
+        customCloudKey.value = trimmed;
+        customCloudKeyController.text = trimmed;
+        await _hive.setSetting(AppConstants.keyCustomCloudKey, trimmed);
+        break;
     }
   }
 
@@ -267,7 +322,46 @@ class SettingsController extends GetxController {
         nvidiaModelController.text = model;
         await _hive.setSetting(AppConstants.keyNvidiaModel, model);
         break;
+      case 'openrouter':
+        openRouterModel.value = model;
+        openRouterModelController.text = model;
+        await _hive.setSetting(AppConstants.keyOpenRouterModel, model);
+        break;
+      case 'custom':
+        customCloudModel.value = model;
+        customCloudModelController.text = model;
+        await _hive.setSetting(AppConstants.keyCustomCloudModel, model);
+        break;
     }
+  }
+
+  Future<void> setCustomCloudConfig({
+    required String name,
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+  }) async {
+    final normalizedName = name.trim().isEmpty ? 'Custom API' : name.trim();
+    final normalizedBaseUrl = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+
+    customCloudName.value = normalizedName;
+    customCloudBaseUrl.value = normalizedBaseUrl;
+    customCloudKey.value = apiKey.trim();
+    customCloudModel.value = model.trim();
+
+    customCloudNameController.text = customCloudName.value;
+    customCloudBaseUrlController.text = customCloudBaseUrl.value;
+    customCloudKeyController.text = customCloudKey.value;
+    customCloudModelController.text = customCloudModel.value;
+
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudName, customCloudName.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudBaseUrl, customCloudBaseUrl.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudKey, customCloudKey.value);
+    await _hive.setSetting(
+        AppConstants.keyCustomCloudModel, customCloudModel.value);
   }
 
   Future<void> setGlobalSystemPrompt(String prompt) async {
