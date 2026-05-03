@@ -120,6 +120,12 @@ class DownloadService extends GetxService {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
+  static String formatWholeMb(int bytes) {
+    if (bytes <= 0) return '0 MB';
+    final mb = (bytes / (1024 * 1024)).round().clamp(1, 1 << 31);
+    return '$mb MB';
+  }
+
   static String formatSpeed(double bytesPerSecond) {
     return '${formatBytes(bytesPerSecond.round())}/s';
   }

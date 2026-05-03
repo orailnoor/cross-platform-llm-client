@@ -1,25 +1,31 @@
 class AiModel {
+  static const runtimeLlama = 'llama';
+  static const runtimeLiteRt = 'litert';
+  static const runtimeSd = 'sd';
+
   final String name;
   final String filename;
   final String url;
   final String size;
   final String description;
   final String template;
+  final String runtime;
   final bool isVision;
   final bool isImported;
   final bool isCustom;
 
-  const AiModel({
+  AiModel({
     required this.name,
     required this.filename,
     required this.url,
     required this.size,
     required this.description,
     required this.template,
+    String? runtime,
     this.isVision = false,
     this.isImported = false,
     this.isCustom = false,
-  });
+  }) : runtime = runtime ?? runtimeFromFilename(filename, template: template);
 
   factory AiModel.fromMap(Map<String, String> map) => AiModel(
         name: map['name'] ?? '',
@@ -28,6 +34,7 @@ class AiModel {
         size: map['size'] ?? '',
         description: map['description'] ?? '',
         template: map['template'] ?? 'chatml',
+        runtime: map['runtime'],
         isVision: map['vision'] == 'true',
         isImported: map['imported'] == 'true',
         isCustom: map['custom'] == 'true',
@@ -40,10 +47,20 @@ class AiModel {
         'size': size,
         'description': description,
         'template': template,
+        'runtime': runtime,
         if (isVision) 'vision': 'true',
         if (isImported) 'imported': 'true',
         if (isCustom) 'custom': 'true',
       };
+
+  static String runtimeFromFilename(String filename, {String? template}) {
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.litertlm')) return runtimeLiteRt;
+    if (lower.endsWith('.safetensors') || template == runtimeSd) {
+      return runtimeSd;
+    }
+    return runtimeLlama;
+  }
 
   AiModel copyWith({
     String? name,
@@ -52,6 +69,7 @@ class AiModel {
     String? size,
     String? description,
     String? template,
+    String? runtime,
     bool? isVision,
     bool? isImported,
     bool? isCustom,
@@ -63,6 +81,7 @@ class AiModel {
       size: size ?? this.size,
       description: description ?? this.description,
       template: template ?? this.template,
+      runtime: runtime ?? this.runtime,
       isVision: isVision ?? this.isVision,
       isImported: isImported ?? this.isImported,
       isCustom: isCustom ?? this.isCustom,

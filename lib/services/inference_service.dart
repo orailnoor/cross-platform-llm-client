@@ -11,6 +11,7 @@ import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart'
 
 /// Cross-platform inference service.
 /// - Android / iOS: uses llama_flutter_android for local GGUF models
+/// - Android: uses flutter_litert_lm for LiteRT-LM models
 /// - Web: cloud-only mode (local inference coming soon)
 class InferenceService extends GetxService {
   final HiveService _hive = Get.find<HiveService>();
@@ -32,6 +33,7 @@ class InferenceService extends GetxService {
   final gpuName = ''.obs;
   final gpuLayersUsed = 0.obs;
   final isGpuAccelerated = false.obs;
+  final loadedModelRuntime = ''.obs;
 
   /// Whether the current platform supports local inference.
   bool get supportsLocalInference => platform.supportsLocalInference;
@@ -39,7 +41,11 @@ class InferenceService extends GetxService {
   // Platform-specific engine
   platform.InferenceEngine? _engine;
 
-  Future<String> loadModel(String modelPath, {String? modelName}) async {
+  Future<String> loadModel(
+    String modelPath, {
+    String? modelName,
+    String? modelRuntime,
+  }) async {
     if (!supportsLocalInference) {
       return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';
     }
@@ -67,6 +73,7 @@ class InferenceService extends GetxService {
 
       final result = await _engine!.loadModel(
         modelPath: modelPath,
+        modelRuntime: modelRuntime,
         contextSize: contextSize,
         deviceTier: deviceTier,
         onProgress: (p) => modelLoadProgress.value = p,
@@ -77,6 +84,7 @@ class InferenceService extends GetxService {
       loadingModelName.value = '';
       modelLoadProgress.value = 1.0;
       loadedModelName.value = modelName ?? modelPath.split('/').last;
+      loadedModelRuntime.value = result.runtime;
       gpuName.value = result.gpuName;
       gpuLayersUsed.value = result.gpuLayers;
       isGpuAccelerated.value = result.gpuLayers > 0;
@@ -86,6 +94,8 @@ class InferenceService extends GetxService {
       await _hive.setSetting(AppConstants.keyLocalModelPath, modelPath);
       await _hive.setSetting(
           AppConstants.keyLocalModelName, loadedModelName.value);
+      await _hive.setSetting(
+          AppConstants.keyLocalModelRuntime, loadedModelRuntime.value);
 
       return result.message;
     } catch (e) {
@@ -106,6 +116,7 @@ class InferenceService extends GetxService {
     isVisionLoaded.value = false;
     loadedModelName.value = '';
     loadingModelName.value = '';
+    loadedModelRuntime.value = '';
     gpuLayersUsed.value = 0;
     isGpuAccelerated.value = false;
     gpuName.value = '';

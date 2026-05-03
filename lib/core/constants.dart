@@ -32,6 +32,7 @@ class AppConstants {
   static const String keyGlobalSystemPrompt = 'global_system_prompt';
   static const String keyLocalModelPath = 'local_model_path';
   static const String keyLocalModelName = 'local_model_name';
+  static const String keyLocalModelRuntime = 'local_model_runtime';
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
@@ -51,6 +52,58 @@ class AppConstants {
 
   // Available Models for Download
   static const List<Map<String, String>> availableModels = [
+    {
+      'name': 'Qwen 3 0.6B (LiteRT-LM)',
+      'filename': 'Qwen3-0.6B.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm',
+      'size': '586 MB',
+      'description':
+          'Smallest LiteRT-LM general-purpose chat model for low-RAM phones',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Qwen 2.5 1.5B Instruct (LiteRT-LM)',
+      'filename': 'Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm',
+      'size': '1.49 GB',
+      'description': 'Balanced LiteRT-LM chat model with int8 quantization',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'DeepSeek R1 Distill Qwen 1.5B (LiteRT-LM)',
+      'filename':
+          'DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv4096.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/DeepSeek-R1-Distill-Qwen-1.5B/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B_multi-prefill-seq_q8_ekv4096.litertlm',
+      'size': '1.71 GB',
+      'description': 'Reasoning-focused LiteRT-LM model with int8 quantization',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Gemma 4 E2B Instruct (LiteRT-LM)',
+      'filename': 'gemma-4-E2B-it.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm',
+      'size': '2.46 GB',
+      'description': 'Strong general chat LiteRT-LM model from Google Gemma',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
+    {
+      'name': 'Gemma 4 E4B Instruct (LiteRT-LM)',
+      'filename': 'gemma-4-E4B-it.litertlm',
+      'url':
+          'https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm',
+      'size': '3.40 GB',
+      'description': 'Highest quality LiteRT-LM option; needs about 5 GB RAM',
+      'template': 'litert',
+      'runtime': 'litert',
+    },
     {
       'name': 'Kimi Moonlight 16B-A3B (Q3_K_S)',
       'filename': 'moonlight-16b-a3b-instruct-q3_k_s.gguf',

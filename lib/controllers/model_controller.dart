@@ -61,7 +61,8 @@ class ModelController extends GetxController {
   }
 
   List<AiModel> get filteredDisplayedModels {
-    final filter = localFilter.value.isEmpty ? defaultLocalFilter : localFilter.value;
+    final filter =
+        localFilter.value.isEmpty ? defaultLocalFilter : localFilter.value;
     return displayedModels.where((model) {
       switch (filter) {
         case 'downloaded':
@@ -141,7 +142,10 @@ class ModelController extends GetxController {
           url: '',
           size: _formatModelSize(file),
           description: 'Imported from local storage',
-          template: 'chatml',
+          template: AiModel.runtimeFromFilename(file) == AiModel.runtimeLiteRt
+              ? 'litert'
+              : 'chatml',
+          runtime: AiModel.runtimeFromFilename(file),
           isImported: true,
           isVision: isVision,
         ));
@@ -180,8 +184,8 @@ class ModelController extends GetxController {
   }
 
   bool isVisionModel(AiModel model) {
-    final lower = '${model.name} ${model.filename} ${model.description}'
-        .toLowerCase();
+    final lower =
+        '${model.name} ${model.filename} ${model.description}'.toLowerCase();
     return model.isVision ||
         lower.contains('vl-') ||
         lower.contains('-vl') ||
@@ -190,8 +194,8 @@ class ModelController extends GetxController {
   }
 
   bool isUncensoredModel(AiModel model) {
-    final lower = '${model.name} ${model.filename} ${model.description}'
-        .toLowerCase();
+    final lower =
+        '${model.name} ${model.filename} ${model.description}'.toLowerCase();
     return lower.contains('uncensored') ||
         lower.contains('abliterated') ||
         lower.contains('unrestricted');
@@ -199,11 +203,25 @@ class ModelController extends GetxController {
 
   bool isImageModel(AiModel model) {
     final lower = model.filename.toLowerCase();
-    return lower.endsWith('.safetensors') || model.template == 'sd';
+    return model.runtime == AiModel.runtimeSd ||
+        lower.endsWith('.safetensors') ||
+        model.template == 'sd';
+  }
+
+  bool isLiteRtModel(AiModel model) {
+    return model.runtime == AiModel.runtimeLiteRt ||
+        model.filename.toLowerCase().endsWith('.litertlm');
+  }
+
+  bool isLlamaModel(AiModel model) {
+    return model.runtime == AiModel.runtimeLlama ||
+        model.filename.toLowerCase().endsWith('.gguf');
   }
 
   bool isGeneralModel(AiModel model) =>
-      !isVisionModel(model) && !isUncensoredModel(model) && !isImageModel(model);
+      !isVisionModel(model) &&
+      !isUncensoredModel(model) &&
+      !isImageModel(model);
 
   String modelSizeLabel(AiModel model) {
     final bytes = fileSizes[model.filename] ?? 0;
@@ -237,6 +255,7 @@ class ModelController extends GetxController {
         : 'model.gguf';
     final decoded = Uri.decodeComponent(segment.split('?').first);
     if (decoded.toLowerCase().endsWith('.gguf') ||
+        decoded.toLowerCase().endsWith('.litertlm') ||
         decoded.toLowerCase().endsWith('.safetensors')) {
       return decoded;
     }
@@ -275,6 +294,10 @@ class ModelController extends GetxController {
           ? 'Added from custom URL'
           : description.trim(),
       template: template.trim().isEmpty ? 'chatml' : template.trim(),
+      runtime: AiModel.runtimeFromFilename(
+        resolvedFilename,
+        template: template.trim().isEmpty ? 'chatml' : template.trim(),
+      ),
       isVision: isVision,
       isCustom: true,
     );
@@ -295,6 +318,49 @@ class ModelController extends GetxController {
       await refreshDownloaded();
     } catch (e) {
       Get.find<AppLogService>().error('Model download failed', details: e);
+      Get.snackbar('Download Failed', '$e',
+          snackPosition: SnackPosition.BOTTOM);
+    }
+  }
+
+  Future<void> downloadModelToDownloads(AiModel model) async {
+    if (model.url.trim().isEmpty) {
+      Get.snackbar('Download Unavailable', 'This model has no download URL.',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+
+    if (!Platform.isAndroid) {
+      Get.snackbar(
+        'Android Only',
+        'Use the app download button or import a local model on this platform.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    try {
+      final result =
+          await _androidImportChannel.invokeMapMethod<String, dynamic>(
+        'downloadToDownloads',
+        {'url': model.url, 'filename': model.filename},
+      );
+      final filename = result?['filename'] as String? ?? model.filename;
+      Get.snackbar(
+        'Download Started',
+        '$filename is downloading to your Downloads folder.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    } on PlatformException catch (e) {
+      Get.find<AppLogService>().error(
+        'Download to Downloads failed',
+        details: '${e.code}: ${e.message}',
+      );
+      Get.snackbar('Download Failed', e.message ?? e.code,
+          snackPosition: SnackPosition.BOTTOM);
+    } catch (e) {
+      Get.find<AppLogService>()
+          .error('Download to Downloads failed', details: e);
       Get.snackbar('Download Failed', '$e',
           snackPosition: SnackPosition.BOTTOM);
     }
@@ -327,7 +393,11 @@ class ModelController extends GetxController {
     } else {
       final model =
           availableModels.firstWhereOrNull((m) => m.filename == filename);
-      final result = await _inference.loadModel(path, modelName: filename);
+      final result = await _inference.loadModel(
+        path,
+        modelName: filename,
+        modelRuntime: model?.runtime,
+      );
       if (_inference.isModelLoaded.value) {
         _inference.isVisionLoaded.value = model?.isVision ?? false;
         await _settings.setInferenceMode('local');
@@ -342,7 +412,8 @@ class ModelController extends GetxController {
 
   Future<void> importModelFromStorage() async {
     if (isImporting.value) {
-      Get.snackbar('Import in Progress', 'Wait for the current import to finish.',
+      Get.snackbar(
+          'Import in Progress', 'Wait for the current import to finish.',
           snackPosition: SnackPosition.BOTTOM);
       return;
     }
@@ -365,9 +436,11 @@ class ModelController extends GetxController {
         final filename = picked.name;
         final lower = filename.toLowerCase();
 
-        if (!lower.endsWith('.gguf') && !lower.endsWith('.safetensors')) {
+        if (!lower.endsWith('.gguf') &&
+            !lower.endsWith('.litertlm') &&
+            !lower.endsWith('.safetensors')) {
           Get.snackbar('Unsupported Model',
-              'Only .gguf and .safetensors files can be imported.',
+              'Only .gguf, .litertlm, and .safetensors files can be imported.',
               snackPosition: SnackPosition.BOTTOM);
           return;
         }
@@ -475,7 +548,8 @@ class ModelController extends GetxController {
                 importBytesPerSecond.value;
       });
 
-      final result = await _androidImportChannel.invokeMapMethod<String, dynamic>(
+      final result =
+          await _androidImportChannel.invokeMapMethod<String, dynamic>(
         'pickAndImportModel',
         {'modelsDir': await _download.modelsDir},
       );
@@ -499,7 +573,8 @@ class ModelController extends GetxController {
       Get.snackbar('Import Failed', e.message ?? e.code,
           snackPosition: SnackPosition.BOTTOM);
     } catch (e) {
-      Get.find<AppLogService>().error('Android model import failed', details: e);
+      Get.find<AppLogService>()
+          .error('Android model import failed', details: e);
       Get.snackbar('Import Failed', '$e', snackPosition: SnackPosition.BOTTOM);
     } finally {
       _androidImportChannel.setMethodCallHandler(null);

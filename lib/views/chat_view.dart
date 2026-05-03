@@ -7,7 +7,9 @@ import '../controllers/chat_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../core/colors.dart';
 import '../services/inference_service.dart';
+import '../utils/thought_parser.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/thought_disclosure.dart';
 
 class ChatView extends GetView<ChatController> {
   const ChatView({super.key});
@@ -246,6 +248,12 @@ class ChatView extends GetView<ChatController> {
 
   /// Real-time streaming bubble — shows AI response as it generates token-by-token.
   Widget _buildStreamingBubble(BuildContext context, String text) {
+    final visibleText = _cleanStreamingText(text).trimLeft();
+    final thoughtParts = splitThoughtTags(visibleText);
+    final answerText = thoughtParts.answer.trimLeft();
+    final hasVisibleText =
+        thoughtParts.hasThought || _hasPrintableStreamingText(answerText);
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -268,23 +276,36 @@ class ChatView extends GetView<ChatController> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            text.isEmpty
+            !hasVisibleText
                 ? _buildTypingIndicator(context)
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: MarkdownBody(
-                          data: text,
-                          selectable: true,
-                          styleSheet: _streamingMarkdownStyle(context),
+                      if (thoughtParts.hasThought)
+                        ThoughtDisclosure(
+                          thought: thoughtParts.thought,
+                          isThinking: thoughtParts.isThinking,
+                          styleSheet: _thoughtMarkdownStyle(context),
                         ),
-                      ),
-                      // Blinking cursor at the end while still generating
-                      _BlinkingCursor(color: Theme.of(context).hintColor),
+                      if (_hasPrintableStreamingText(answerText))
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: MarkdownBody(
+                                data: answerText,
+                                selectable: true,
+                                styleSheet: _streamingMarkdownStyle(context),
+                              ),
+                            ),
+                            _BlinkingCursor(
+                              color: Theme.of(context).hintColor,
+                            ),
+                          ],
+                        ),
                     ],
                   ),
-            if (text.isNotEmpty)
+            if (hasVisibleText)
               Obx(() {
                 final inference = Get.find<InferenceService>();
                 if (inference.tokensPerSecond.value > 0) {
@@ -331,6 +352,48 @@ class ChatView extends GetView<ChatController> {
         borderRadius: BorderRadius.circular(8),
       ),
     );
+  }
+
+  MarkdownStyleSheet _thoughtMarkdownStyle(BuildContext context) {
+    final muted = Theme.of(context).hintColor;
+    final base = GoogleFonts.inter(fontSize: 12, color: muted, height: 1.35);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 11,
+        color: muted,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  String _cleanStreamingText(String text) {
+    return text
+        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
+        .replaceAll('\uFFFD', '');
+  }
+
+  bool _hasPrintableStreamingText(String text) {
+    for (final rune in text.runes) {
+      if (rune > 32 &&
+          rune != 0x7F &&
+          rune != 0x200B &&
+          rune != 0x200C &&
+          rune != 0x200D &&
+          rune != 0xFEFF &&
+          rune != 0xFFFD) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Model loading progress bar.

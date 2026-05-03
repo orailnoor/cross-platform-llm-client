@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 
 /// Whether the current platform supports local inference.
@@ -11,27 +12,39 @@ class LoadResult {
   final String message;
   final String gpuName;
   final int gpuLayers;
+  final String runtime;
   LoadResult({
     required this.success,
     required this.message,
     this.gpuName = '',
     this.gpuLayers = 0,
+    this.runtime = '',
   });
 }
 
 /// Android & iOS inference engine — wraps llama_flutter_android.
 class InferenceEngine {
   LlamaController? _controller;
+  LiteLmEngine? _liteEngine;
+  LiteLmConversation? _liteConversation;
   StreamSubscription? _subscription;
   Timer? _idleTimer;
   void Function()? _onStop;
+  bool _isLiteRt = false;
 
   Future<LoadResult> loadModel({
     required String modelPath,
+    String? modelRuntime,
     required int contextSize,
     required String deviceTier,
     void Function(double)? onProgress,
   }) async {
+    final runtime = _runtimeFor(modelPath, modelRuntime);
+    if (runtime == 'litert') {
+      return _loadLiteRtModel(modelPath);
+    }
+
+    _isLiteRt = false;
     _controller = LlamaController();
 
     // ── GPU Detection ──
@@ -108,7 +121,38 @@ class InferenceEngine {
       message: 'Model loaded ($accel).',
       gpuName: gpuNameStr,
       gpuLayers: gpuLayers,
+      runtime: 'llama',
     );
+  }
+
+  Future<LoadResult> _loadLiteRtModel(String modelPath) async {
+    if (!Platform.isAndroid) {
+      throw UnsupportedError(
+          'LiteRT-LM is enabled for Android only in this app.');
+    }
+
+    _isLiteRt = true;
+    _controller = null;
+
+    try {
+      _liteEngine = await LiteLmEngine.create(
+        LiteLmEngineConfig(
+          modelPath: modelPath,
+          backend: LiteLmBackend.cpu,
+        ),
+      );
+      print('[Inference] LiteRT-LM loaded with CPU backend');
+      return LoadResult(
+        success: true,
+        message: 'LiteRT-LM model loaded (CPU backend).',
+        gpuName: '',
+        gpuLayers: 0,
+        runtime: 'litert',
+      );
+    } catch (error) {
+      print('[Inference] LiteRT-LM CPU load failed: $error');
+      rethrow;
+    }
   }
 
   Future<String> generate({
@@ -121,6 +165,17 @@ class InferenceEngine {
     String? imagePath,
     void Function(String token)? onToken,
   }) async {
+    if (_isLiteRt) {
+      return _generateLiteRt(
+        prompt: prompt,
+        conversationHistory: conversationHistory,
+        systemPrompt: systemPrompt,
+        maxTokens: maxTokens,
+        temperature: temperature,
+        onToken: onToken,
+      );
+    }
+
     if (_controller == null) throw Exception('No model loaded');
 
     final completer = Completer<String>();
@@ -223,9 +278,114 @@ class InferenceEngine {
     return await completer.future;
   }
 
+  Future<String> _generateLiteRt({
+    required String prompt,
+    List<Map<String, String>>? conversationHistory,
+    required String systemPrompt,
+    required int maxTokens,
+    required double temperature,
+    void Function(String token)? onToken,
+  }) async {
+    if (_liteEngine == null) throw Exception('No LiteRT-LM model loaded');
+
+    await _subscription?.cancel();
+    try {
+      await _liteConversation?.dispose();
+    } catch (_) {}
+
+    _liteConversation = await _liteEngine!.createConversation(
+      LiteLmConversationConfig(
+        systemInstruction: systemPrompt,
+        initialMessages:
+            _buildLiteRtInitialMessages(prompt, conversationHistory),
+        samplerConfig: LiteLmSamplerConfig(
+          temperature: temperature,
+          topK: 40,
+          topP: 0.95,
+        ),
+      ),
+    );
+
+    final completer = Completer<String>();
+    final buffer = StringBuffer();
+    bool completed = false;
+    bool hasVisibleOutput = false;
+    var tokenCount = 0;
+
+    void finish(String result) {
+      if (!completed) {
+        completed = true;
+        _idleTimer?.cancel();
+        _subscription?.cancel();
+        _onStop = null;
+        if (!completer.isCompleted) completer.complete(result);
+      }
+    }
+
+    _onStop = () => finish(buffer.toString());
+
+    _subscription = _liteConversation!.sendMessageStream(prompt).listen(
+      (delta) {
+        var text = _cleanLiteRtChunk(delta.text);
+        if (text.isEmpty) return;
+
+        if (!hasVisibleOutput) {
+          if (!_hasPrintableText(text)) return;
+          text = text.trimLeft();
+          hasVisibleOutput = true;
+        }
+
+        if (tokenCount == 0) {
+          print('[Inference] LiteRT-LM FIRST TOKEN received');
+        }
+        tokenCount++;
+        buffer.write(text);
+        onToken?.call(text);
+        _idleTimer?.cancel();
+        _idleTimer = Timer(const Duration(seconds: 5), () {
+          print('[Inference] LiteRT-LM idle timeout - $tokenCount chunks');
+          finish(buffer.toString());
+        });
+      },
+      onDone: () {
+        print('[Inference] LiteRT-LM stream done - $tokenCount chunks');
+        finish(buffer.toString());
+      },
+      onError: (error) {
+        print('[Inference] LiteRT-LM stream error: $error');
+        finish('ERROR: LiteRT-LM generation failed - $error');
+      },
+    );
+
+    _idleTimer = Timer(const Duration(seconds: 60), () {
+      if (tokenCount == 0) {
+        finish('ERROR: LiteRT-LM model did not respond. Try a smaller model.');
+      }
+    });
+
+    Future.delayed(const Duration(seconds: 180), () {
+      if (!completed) {
+        final partial = buffer.toString();
+        finish(partial.isEmpty
+            ? 'ERROR: LiteRT-LM generation timed out.'
+            : partial);
+      }
+    });
+
+    return completer.future;
+  }
+
   Future<void> stop() async {
     _idleTimer?.cancel();
     _subscription?.cancel();
+    if (_isLiteRt) {
+      try {
+        await _liteConversation?.dispose();
+      } catch (_) {}
+      _liteConversation = null;
+      _onStop?.call();
+      return;
+    }
     try {
       await _controller?.stop();
     } catch (_) {}
@@ -233,6 +393,7 @@ class InferenceEngine {
   }
 
   Future<ContextInfo?> getContextInfo() async {
+    if (_isLiteRt) return null;
     try {
       return await _controller?.getContextInfo();
     } catch (_) {
@@ -245,7 +406,16 @@ class InferenceEngine {
     try {
       await _controller?.dispose();
     } catch (_) {}
+    try {
+      await _liteConversation?.dispose();
+    } catch (_) {}
+    try {
+      await _liteEngine?.dispose();
+    } catch (_) {}
     _controller = null;
+    _liteConversation = null;
+    _liteEngine = null;
+    _isLiteRt = false;
   }
 
   // ── Helpers ──
@@ -253,6 +423,61 @@ class InferenceEngine {
   int _extractGpuModel(String gpuName) {
     final match = RegExp(r'(\d{3})').firstMatch(gpuName.toLowerCase());
     return match != null ? (int.tryParse(match.group(1)!) ?? 0) : 0;
+  }
+
+  String _runtimeFor(String modelPath, String? modelRuntime) {
+    final runtime = modelRuntime?.toLowerCase();
+    if (runtime == 'litert' || runtime == 'llama') return runtime!;
+    final lower = modelPath.toLowerCase();
+    if (lower.endsWith('.litertlm')) return 'litert';
+    return 'llama';
+  }
+
+  List<LiteLmMessage> _buildLiteRtInitialMessages(
+    String prompt,
+    List<Map<String, String>>? history,
+  ) {
+    if (history == null || history.isEmpty) return const [];
+
+    var recent = history.length > 16
+        ? history.sublist(history.length - 16)
+        : List<Map<String, String>>.from(history);
+    if (recent.isNotEmpty &&
+        recent.last['role'] == 'user' &&
+        recent.last['content'] == prompt) {
+      recent = recent.sublist(0, recent.length - 1);
+    }
+
+    return recent
+        .where((msg) => (msg['content'] ?? '').trim().isNotEmpty)
+        .map((msg) {
+      final content = msg['content'] ?? '';
+      return msg['role'] == 'assistant'
+          ? LiteLmMessage.model(content)
+          : LiteLmMessage.user(content);
+    }).toList();
+  }
+
+  String _cleanLiteRtChunk(String text) {
+    return text
+        .replaceAll(RegExp(r'[\u0000-\u001F\u007F-\u009F]'), '')
+        .replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '')
+        .replaceAll('\uFFFD', '');
+  }
+
+  bool _hasPrintableText(String text) {
+    for (final rune in text.runes) {
+      if (rune > 32 &&
+          rune != 0x7F &&
+          rune != 0x200B &&
+          rune != 0x200C &&
+          rune != 0x200D &&
+          rune != 0xFEFF &&
+          rune != 0xFFFD) {
+        return true;
+      }
+    }
+    return false;
   }
 
   List<ChatMessage> _buildChatMessages(

@@ -139,10 +139,10 @@ class ModelView extends GetView<ModelController> {
       children: [
         Expanded(
           child: Obx(() => OutlinedButton.icon(
-                onPressed:
-                    controller.isImporting.value || inference.isLoadingModel.value
-                        ? null
-                        : () => _showAddUrlDialog(context),
+                onPressed: controller.isImporting.value ||
+                        inference.isLoadingModel.value
+                    ? null
+                    : () => _showAddUrlDialog(context),
                 icon: const Icon(Icons.add_link, size: 16),
                 label: const Text('URL'),
               )),
@@ -150,10 +150,10 @@ class ModelView extends GetView<ModelController> {
         const SizedBox(width: 10),
         Expanded(
           child: Obx(() => OutlinedButton.icon(
-                onPressed:
-                    controller.isImporting.value || inference.isLoadingModel.value
-                        ? null
-                        : () => controller.importModelFromStorage(),
+                onPressed: controller.isImporting.value ||
+                        inference.isLoadingModel.value
+                    ? null
+                    : () => controller.importModelFromStorage(),
                 icon: const Icon(Icons.file_upload_outlined, size: 16),
                 label: const Text('Import'),
               )),
@@ -243,8 +243,7 @@ class ModelView extends GetView<ModelController> {
       ),
       child: Column(
         children: [
-          Icon(Icons.search_off,
-              size: 32, color: Theme.of(context).hintColor),
+          Icon(Icons.search_off, size: 32, color: Theme.of(context).hintColor),
           const SizedBox(height: 10),
           Text(
             title,
@@ -785,12 +784,12 @@ class ModelView extends GetView<ModelController> {
                     runSpacing: 4,
                     children: [
                       Text(
-                        '${DownloadService.formatBytes(copied)} / ${DownloadService.formatBytes(total)}',
+                        '${DownloadService.formatWholeMb(copied)} / ${DownloadService.formatWholeMb(total)}',
                         style: GoogleFonts.inter(
                             fontSize: 11, color: Theme.of(context).hintColor),
                       ),
                       Text(
-                        '${DownloadService.formatBytes(remaining)} left',
+                        '${DownloadService.formatWholeMb(remaining)} left',
                         style: GoogleFonts.inter(
                             fontSize: 11, color: Theme.of(context).hintColor),
                       ),
@@ -868,7 +867,7 @@ class ModelView extends GetView<ModelController> {
             ),
             const SizedBox(height: 6),
             Text(
-              '${DownloadService.formatBytes(dp.downloadedBytes.value)} / ${DownloadService.formatBytes(dp.totalBytes.value)} · ${(dp.progress.value * 100).toStringAsFixed(1)}%',
+              '${DownloadService.formatWholeMb(dp.downloadedBytes.value)} / ${DownloadService.formatWholeMb(dp.totalBytes.value)} · ${(dp.progress.value * 100).toStringAsFixed(1)}%',
               style: GoogleFonts.inter(
                 fontSize: 11,
                 color: Theme.of(context).hintColor,
@@ -1449,6 +1448,11 @@ class ModelView extends GetView<ModelController> {
     if (controller.isDownloaded(model.filename)) {
       badges.add((label: 'DOWNLOADED', color: AppColors.success));
     }
+    if (controller.isLiteRtModel(model)) {
+      badges.add((label: 'LiteRT', color: AppColors.primary));
+    } else if (controller.isLlamaModel(model)) {
+      badges.add((label: 'GGUF', color: AppColors.info));
+    }
     if (controller.isUncensoredModel(model)) {
       badges.add((label: 'UNCENSORED', color: AppColors.error));
     }
@@ -1496,8 +1500,8 @@ class ModelView extends GetView<ModelController> {
       final isCurrentlyDownloading =
           controller.isDownloadingModel(model.filename);
       final isAnyModelLoading = inference.isLoadingModel.value;
-      final isThisModelLoading =
-          isAnyModelLoading && inference.loadingModelName.value == model.filename;
+      final isThisModelLoading = isAnyModelLoading &&
+          inference.loadingModelName.value == model.filename;
       final disableActions = controller.isImporting.value ||
           isAnyModelLoading ||
           isCurrentlyDownloading;
@@ -1598,18 +1602,33 @@ class ModelView extends GetView<ModelController> {
                       ),
                     ] else ...[
                       Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: disableActions
-                              ? null
-                              : () => controller.downloadModel(model),
-                          icon: const Icon(Icons.download, size: 16),
-                          label: const Text('Download'),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: disableActions
+                                  ? null
+                                  : () => controller.downloadModel(model),
+                              icon: const Icon(Icons.download, size: 16),
+                              label: const Text('Download'),
+                            ),
+                            if (model.url.trim().isNotEmpty)
+                              TextButton(
+                                onPressed: disableActions
+                                    ? null
+                                    : () => controller
+                                        .downloadModelToDownloads(model),
+                                child:
+                                    const Text('Download to phone Downloads'),
+                              ),
+                          ],
                         ),
                       ),
                     ],
                   ],
                 ),
-              if (isThisModelLoading) _buildModelLoadingProgress(context, model),
+              if (isThisModelLoading)
+                _buildModelLoadingProgress(context, model),
             ],
           ),
         ),
@@ -1622,7 +1641,7 @@ class ModelView extends GetView<ModelController> {
     return Obx(() {
       final percent = dp.progress.value * 100;
       final totalLabel = dp.totalBytes.value > 0
-          ? DownloadService.formatBytes(dp.totalBytes.value)
+          ? DownloadService.formatWholeMb(dp.totalBytes.value)
           : controller.modelSizeLabel(model);
       final remaining = dp.totalBytes.value <= 0
           ? 0
@@ -1684,13 +1703,13 @@ class ModelView extends GetView<ModelController> {
             runSpacing: 4,
             children: [
               Text(
-                '${DownloadService.formatBytes(dp.downloadedBytes.value)} / $totalLabel',
+                '${DownloadService.formatWholeMb(dp.downloadedBytes.value)} / $totalLabel',
                 style: GoogleFonts.inter(
                     fontSize: 11, color: Theme.of(context).hintColor),
               ),
               if (dp.totalBytes.value > 0)
                 Text(
-                  '${DownloadService.formatBytes(remaining)} left',
+                  '${DownloadService.formatWholeMb(remaining)} left',
                   style: GoogleFonts.inter(
                       fontSize: 11, color: Theme.of(context).hintColor),
                 ),

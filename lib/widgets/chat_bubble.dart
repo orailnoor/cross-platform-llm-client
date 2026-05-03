@@ -4,6 +4,8 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme.dart';
 import '../models/chat_message.dart';
+import '../utils/thought_parser.dart';
+import 'thought_disclosure.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
@@ -16,6 +18,10 @@ class ChatBubble extends StatelessWidget {
     final visibleContent = message.fileName == null
         ? message.content
         : message.content.split('\n\nAttached file:').first;
+    final thoughtParts = isUser
+        ? const ThoughtParts(thought: '', answer: '', isThinking: false)
+        : splitThoughtTags(visibleContent);
+    final answerContent = isUser ? visibleContent : thoughtParts.answer.trim();
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -58,20 +64,26 @@ class ChatBubble extends StatelessWidget {
               ),
 
             // Message content
-            isUser
-                ? SelectableText(
-                    visibleContent,
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      color: Theme.of(context).colorScheme.onSurface,
-                      height: 1.4,
-                    ),
-                  )
-                : MarkdownBody(
-                    data: visibleContent,
-                    selectable: true,
-                    styleSheet: _markdownStyle(context),
-                  ),
+            if (!isUser && thoughtParts.hasThought)
+              ThoughtDisclosure(
+                thought: thoughtParts.thought,
+                styleSheet: _thoughtMarkdownStyle(context),
+              ),
+            if (isUser)
+              SelectableText(
+                visibleContent,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  height: 1.4,
+                ),
+              )
+            else if (answerContent.isNotEmpty)
+              MarkdownBody(
+                data: answerContent,
+                selectable: true,
+                styleSheet: _markdownStyle(context),
+              ),
             if (message.fileName != null) ...[
               const SizedBox(height: 8),
               Container(
@@ -163,6 +175,26 @@ class ChatBubble extends StatelessWidget {
       blockquote: base.copyWith(color: muted),
       blockquoteDecoration: BoxDecoration(
         border: Border(left: BorderSide(color: muted.withValues(alpha: 0.45))),
+      ),
+    );
+  }
+
+  MarkdownStyleSheet _thoughtMarkdownStyle(BuildContext context) {
+    final muted = Theme.of(context).hintColor;
+    final base = GoogleFonts.inter(fontSize: 12, color: muted, height: 1.35);
+    return MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+      p: base,
+      strong: base.copyWith(fontWeight: FontWeight.w700),
+      em: base.copyWith(fontStyle: FontStyle.italic),
+      listBullet: base,
+      code: GoogleFonts.firaCode(
+        fontSize: 11,
+        color: muted,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
       ),
     );
   }

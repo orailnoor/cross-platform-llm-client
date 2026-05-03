@@ -15,6 +15,7 @@ import '../services/inference_service.dart';
 import '../services/cloud_service.dart';
 import '../services/local_image_service.dart';
 import '../services/app_log_service.dart';
+import '../utils/thought_parser.dart';
 
 class ChatController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
@@ -163,6 +164,8 @@ class ChatController extends GetxController {
   // ─── Send Message ───────────────────────────────
 
   Future<void> sendMessage() async {
+    if (isLoading.value || isStreaming.value) return;
+
     final text = textController.text.trim();
     if (text.isEmpty) return;
     final fileName = selectedFileName.value;
@@ -227,7 +230,12 @@ class ChatController extends GetxController {
       // Build conversation history
       final history = messages
           .where((m) => m.role == 'user' || m.role == 'assistant')
-          .map((m) => {'role': m.role, 'content': m.content})
+          .map((m) => {
+                'role': m.role,
+                'content': m.role == 'assistant'
+                    ? splitThoughtTags(m.content).answer
+                    : m.content,
+              })
           .toList();
 
       if (inferenceMode == 'local') {

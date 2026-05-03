@@ -1,10 +1,13 @@
 package com.aichat.ai_chat
 
 import android.app.AlertDialog
+import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.Environment
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -40,9 +43,37 @@ class MainActivity : FlutterActivity() {
                     pendingImportResult = result
                     openModelPicker()
                 }
+                "downloadToDownloads" -> {
+                    val url = call.argument<String>("url")
+                    val filename = call.argument<String>("filename")
+                    if (url.isNullOrBlank() || filename.isNullOrBlank()) {
+                        result.error("INVALID_DOWNLOAD", "Model URL or filename is missing.", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val downloadId = enqueueDownloadToDownloads(url, filename)
+                        result.success(mapOf("downloadId" to downloadId, "filename" to sanitizeFilename(filename)))
+                    } catch (e: Exception) {
+                        result.error("DOWNLOAD_FAILED", e.message ?: e.toString(), null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun enqueueDownloadToDownloads(url: String, filename: String): Long {
+        val safeName = sanitizeFilename(filename)
+        val request = DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle(safeName)
+            setDescription("Downloading AI model")
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setAllowedOverMetered(true)
+            setAllowedOverRoaming(true)
+            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safeName)
+        }
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        return manager.enqueue(request)
     }
 
     private fun openModelPicker() {
@@ -77,10 +108,10 @@ class MainActivity : FlutterActivity() {
 
         val filename = displayNameFor(uri)
         val lower = filename.lowercase()
-        if (!lower.endsWith(".gguf") && !lower.endsWith(".safetensors")) {
+        if (!lower.endsWith(".gguf") && !lower.endsWith(".litertlm") && !lower.endsWith(".safetensors")) {
             finishImportError(
                 "UNSUPPORTED_MODEL",
-                "Only .gguf and .safetensors files can be imported."
+                "Only .gguf, .litertlm, and .safetensors files can be imported."
             )
             return
         }
