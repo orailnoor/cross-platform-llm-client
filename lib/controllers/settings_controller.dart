@@ -480,6 +480,8 @@ class SettingsController extends GetxController {
     if (normalized == 'gpu_fast') {
       await _hive.setSetting(AppConstants.keyLiteRtGpuCrashDetected, false);
     }
+  }
+
   Future<void> setImageSteps(int value) async {
     imageSteps.value = value;
     await _hive.setSetting(AppConstants.keyImageSteps, value);

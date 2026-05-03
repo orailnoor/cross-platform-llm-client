@@ -128,7 +128,7 @@ class SettingsView extends GetView<SettingsController> {
               RadioListTile<ThemeMode>(
                 value: mode,
                 groupValue: controller.themeMode.value,
-                onChanged: (v) => controller.setThemeMode(v!),
+                // onChanged: (v) => controller.setThemeMode(v!),
                 title: Text(
                   _themeModeName(mode),
                   style: GoogleFonts.inter(
