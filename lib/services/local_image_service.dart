@@ -60,7 +60,9 @@ class LocalImageService extends GetxService {
 
     isGenerating.value = true;
     try {
-      final steps = _hive.getSetting<int>('image_steps', defaultValue: 20) ?? 20;
+      final steps = _hive.getSetting<int>(AppConstants.keyImageSteps,
+          defaultValue: AppConstants.defaultImageSteps) ??
+          AppConstants.defaultImageSteps;
       
       final rawBytes = await SdFlutterAndroid.generateImage(
         prompt, 

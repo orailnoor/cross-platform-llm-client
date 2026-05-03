@@ -36,11 +36,13 @@ class AppConstants {
   static const String keyTemperature = 'temperature';
   static const String keyMaxTokens = 'max_tokens';
   static const String keyContextSize = 'context_size';
+  static const String keyImageSteps = 'image_steps';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;
   static const int defaultMaxTokens = 1024;
   static const int defaultContextSize = 2048;
+  static const int defaultImageSteps = 4;
 
   // System Prompt (compact for small context models)
   static const String systemPrompt =

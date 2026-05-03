@@ -39,6 +39,7 @@ class SettingsController extends GetxController {
   final temperature = 0.1.obs;
   final maxTokens = 512.obs;
   final contextSize = 2048.obs;
+  final imageSteps = 4.obs;
 
   // Persistent text controllers for settings fields
   final openaiKeyController = TextEditingController();
@@ -156,6 +157,9 @@ class SettingsController extends GetxController {
     contextSize.value = _hive.getSetting(AppConstants.keyContextSize,
             defaultValue: AppConstants.defaultContextSize) ??
         AppConstants.defaultContextSize;
+    imageSteps.value = _hive.getSetting(AppConstants.keyImageSteps,
+            defaultValue: AppConstants.defaultImageSteps) ??
+        AppConstants.defaultImageSteps;
 
     // Sync controllers with loaded values
     openaiKeyController.text = openaiKey.value;
@@ -425,6 +429,11 @@ class SettingsController extends GetxController {
   Future<void> setContextSize(int value) async {
     contextSize.value = value;
     await _hive.setSetting(AppConstants.keyContextSize, value);
+  }
+
+  Future<void> setImageSteps(int value) async {
+    imageSteps.value = value;
+    await _hive.setSetting(AppConstants.keyImageSteps, value);
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {

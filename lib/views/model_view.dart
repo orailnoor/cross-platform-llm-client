@@ -166,6 +166,7 @@ class ModelView extends GetView<ModelController> {
     const labels = {
       'downloaded': 'Downloaded',
       'general': 'General',
+      'image': 'Image Gen',
       'uncensored': 'Uncensored',
       'vision': 'Vision',
     };
@@ -205,7 +206,7 @@ class ModelView extends GetView<ModelController> {
         : controller.localFilter.value;
     final title = filter == 'downloaded'
         ? 'No downloaded models yet'
-        : 'No ${filter == 'vision' ? 'vision' : filter} models found';
+        : 'No ${filter == 'vision' ? 'vision' : filter == 'image' ? 'image generation' : filter} models found';
     final subtitle = filter == 'downloaded'
         ? 'Import a local model or add a downloadable URL.'
         : 'Try another filter or add a custom model URL.';
@@ -1351,6 +1352,9 @@ class ModelView extends GetView<ModelController> {
     }
     if (controller.isVisionModel(model)) {
       badges.add((label: 'VISION', color: AppColors.info));
+    }
+    if (controller.isImageModel(model)) {
+      badges.add((label: 'IMAGE', color: AppColors.primary));
     }
     if (model.isImported) {
       badges.add((label: 'IMPORTED', color: AppColors.secondary));

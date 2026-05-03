@@ -263,7 +263,12 @@ class ChatController extends GetxController {
           final pngBytes = await localImage.generateImage(
             prompt: text,
             onProgress: (step, total) {
-              streamingResponse.value = 'Generating locally... ($step/$total)';
+              final estSec = (total - step) * 20; // ~20 sec per step on CPU
+              final estText = estSec > 60
+                  ? '${(estSec / 60).ceil()} min remaining'
+                  : '$estSec sec remaining';
+              streamingResponse.value =
+                  'Generating image... step $step/$total · ~$estText';
               trackThoughtTiming();
               _scrollToBottom();
             },

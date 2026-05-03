@@ -12,8 +12,7 @@ static sd_ctx_t* g_sd_ctx = nullptr;
 static JavaVM* g_jvm = nullptr;
 static jobject g_progress_callback = nullptr;
 
-extern "C" JNIEXPORT jint JNICALL
-JNI_OnLoad(JavaVM* vm, void* reserved) {
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
     return JNI_VERSION_1_6;
 }
@@ -25,13 +24,24 @@ void sd_log_cb(enum sd_log_level_t level, const char* text, void* data) {
 void sd_progress_cb(int step, int steps, float time, void* data) {
     if (g_progress_callback && g_jvm) {
         JNIEnv* env;
-        if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_OK) {
-            jclass clazz = env->GetObjectClass(g_progress_callback);
+        jint attachStatus = g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (attachStatus == JNI_EDETACHED) {
+            if (g_jvm->AttachCurrentThread(&env, nullptr) != 0) {
+                return;
+            }
+        } else if (attachStatus != JNI_OK) {
+            return;
+        }
+        jclass clazz = env->GetObjectClass(g_progress_callback);
+        if (clazz) {
             jmethodID method = env->GetMethodID(clazz, "onProgress", "(II)V");
             if (method) {
                 env->CallVoidMethod(g_progress_callback, method, (jint)step, (jint)steps);
             }
         }
+        // Note: we don't detach here because generate_image may call this
+        // multiple times. The thread will be detached when the JVM exits
+        // or the native method returns (for threads attached by AttachCurrentThread).
     }
 }
 
@@ -71,7 +81,12 @@ Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_generateImage(
         return nullptr;
     }
 
-    g_progress_callback = callback;
+    // Store callback as global ref so it remains valid across threads
+    if (g_progress_callback) {
+        env->DeleteGlobalRef(g_progress_callback);
+    }
+    g_progress_callback = env->NewGlobalRef(callback);
+
     const char* p_str = env->GetStringUTFChars(prompt, nullptr);
     
     sd_img_gen_params_t params;
@@ -86,23 +101,21 @@ Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_generateImage(
     sd_image_t* result = generate_image(g_sd_ctx, &params);
     
     env->ReleaseStringUTFChars(prompt, p_str);
-    g_progress_callback = nullptr;
+
+    if (g_progress_callback) {
+        env->DeleteGlobalRef(g_progress_callback);
+        g_progress_callback = nullptr;
+    }
 
     if (!result) {
         LOGE("Generation failed");
         return nullptr;
     }
 
-    // result->data is raw RGB. We need to convert it to PNG.
-    // For now, let's just return the raw bytes and handle conversion in Dart
-    // Or we could use a C++ PNG library, but raw bytes are easier for now.
     size_t size = result->width * result->height * result->channel;
     jbyteArray array = env->NewByteArray(size);
     env->SetByteArrayRegion(array, 0, size, (jbyte*)result->data);
     
-    // stable-diffusion.cpp generate_image returns a pointer that should NOT be freed manually?
-    // Actually, usually we need to free it. Let's check stable-diffusion.cpp examples.
-    // In SD it seems result is a pointer to an image that we own.
     free(result->data);
     free(result);
 
@@ -115,5 +128,9 @@ Java_com_example_sd_1flutter_1android_SdFlutterAndroidPlugin_unloadModel(
     if (g_sd_ctx) {
         free_sd_ctx(g_sd_ctx);
         g_sd_ctx = nullptr;
+    }
+    if (g_progress_callback) {
+        env->DeleteGlobalRef(g_progress_callback);
+        g_progress_callback = nullptr;
     }
 }
