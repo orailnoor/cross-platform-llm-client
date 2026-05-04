@@ -9,6 +9,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
+# Enable Vulkan GPU backend for ggml on Android
+set(SD_VULKAN ON CACHE BOOL "Enable Vulkan backend" FORCE)
+set(GGML_VULKAN ON CACHE BOOL "Enable GGML Vulkan" FORCE)
+
+# Use custom FindVulkan that works with Android NDK cross-compilation
+list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # Add stable-diffusion.cpp
 set(SD_BUILD_EXAMPLES OFF CACHE BOOL "Disable SD examples")
 set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "Build SD as static")
@@ -23,6 +30,7 @@ target_link_libraries(sd_jni
     stable-diffusion
     android
     log
+    $<$<BOOL:${ANDROID}>:-lvulkan>
 )
 
 target_include_directories(sd_jni PRIVATE
