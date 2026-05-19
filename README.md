@@ -1,10 +1,8 @@
-# PrivateLM
+# MyAI
 
-[![Live Web App](https://img.shields.io/badge/Live_Demo-Try_Web_App-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://ai-chat-orailnoor.web.app/)
+A production-ready, cross-platform AI chat client built with Flutter. MyAI unifies local on-device LLM inference with cloud API access, giving users full control over how their models run.
 
-A production-ready, cross-platform AI chat client built with Flutter. It unifies local on-device LLM inference (Android) with cloud API access, giving users full control over how their models run.
-
-![Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast](PrivateLM.png)
+![Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast](MyAI.png)
 _Image generation tested on Moto G71 (Snapdragon), Oneplus 10r (Mediatek), Pixel 6A (Tensor), Poco F1 (Snapdragon), Samsung s23 (Snapdragon) 4 steps fast_
 
 ![Generated on pixel 6 with 20 step](IMG_2390.png)
@@ -108,7 +106,7 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 
 ### iOS / iPad
 
-The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `PrivateLM-iOS.zip` from the [Releases](https://github.com/orailnoor/cross-platform-llm-client/releases) page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental — iPad is the recommended iOS target due to RAM requirements for local models.
+The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `MyAI-iOS.zip` from the Releases page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental because iPad is the recommended iOS target due to RAM requirements for local models.
 
 ---
 

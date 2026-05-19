@@ -1,5 +1,5 @@
-name: privatelm
-description: AI Chat — Local/Cloud LLM Assistant
+name: myai
+description: MyAI - Local/Cloud LLM Assistant
 publish_to: "none"
 version: 1.0.3+3
 

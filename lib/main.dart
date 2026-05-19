@@ -54,7 +54,7 @@ void main() async {
   // Keep last model as a quick-load option, but do not auto-load on startup.
   _validateLastModel();
 
-  runApp(const PrivateLMApp());
+  runApp(const MyAIApp());
 
   // Apply system UI after frame is rendered so Get.mediaQuery is available
   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -114,14 +114,14 @@ void _autoConfigureForDevice() {
       'maxTokens=${device.recommendedMaxTokens} for ${device.totalRamGB.value.toStringAsFixed(1)}GB RAM');
 }
 
-class PrivateLMApp extends StatelessWidget {
-  const PrivateLMApp({super.key});
+class MyAIApp extends StatelessWidget {
+  const MyAIApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     final settings = Get.find<SettingsController>();
     return Obx(() => GetMaterialApp(
-          title: 'PrivateLM',
+          title: 'MyAI',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

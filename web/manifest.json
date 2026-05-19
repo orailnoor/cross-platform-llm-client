@@ -1,11 +1,11 @@
 {
-    "name": "PrivateLM",
-    "short_name": "PrivateLM",
+    "name": "MyAI",
+    "short_name": "MyAI",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "MyAI - Local/Cloud LLM Assistant.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

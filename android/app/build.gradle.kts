@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.orailnoor.privatelm"
+    namespace = "com.myai.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -21,7 +21,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.orailnoor.privatelm"
+        applicationId = "com.myai.app"
         minSdk = 28
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

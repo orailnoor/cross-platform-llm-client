@@ -1,4 +1,4 @@
-package com.orailnoor.privatelm
+package com.myai.app
 
 import android.app.AlertDialog
 import android.app.AlarmManager
@@ -23,8 +23,8 @@ import kotlin.system.exitProcess
 import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
-    private val importChannelName = "com.aichat.ai_chat/model_import"
-    private val tunnelChannelName = "com.aichat.ai_chat/tunnel"
+    private val importChannelName = "com.myai.app/model_import"
+    private val tunnelChannelName = "com.myai.app/tunnel"
     private val importRequestCode = 4207
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -113,7 +113,7 @@ class MainActivity : FlutterActivity() {
         ngrokDomain: String,
         result: MethodChannel.Result,
     ) {
-        thread(name = "ai-chat-tunnel-start") {
+        thread(name = "myai-tunnel-start") {
             try {
                 stopTunnel()
                 val tunnelResult = if (provider == "ngrok") {
@@ -270,7 +270,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startLogReader(reader: java.io.BufferedReader, label: String) {
-        thread(name = "ai-chat-$label-log", isDaemon = true) {
+        thread(name = "myai-$label-log", isDaemon = true) {
             try {
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {

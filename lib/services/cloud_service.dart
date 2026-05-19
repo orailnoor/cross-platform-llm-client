@@ -172,8 +172,8 @@ class CloudService extends GetxService {
   Map<String, String> get _openAICompatibleExtraHeaders {
     if (_provider == 'openrouter') {
       return const {
-        'HTTP-Referer': 'https://ai-chat.local',
-        'X-Title': 'AI Chat',
+        'HTTP-Referer': 'https://myai.local',
+        'X-Title': 'MyAI',
       };
     }
     return const {};
@@ -454,8 +454,8 @@ class CloudService extends GetxService {
       temperature: temperature,
       maxTokens: maxTokens,
       extraHeaders: const {
-        'HTTP-Referer': 'https://ai-chat.local',
-        'X-Title': 'AI Chat',
+        'HTTP-Referer': 'https://myai.local',
+        'X-Title': 'MyAI',
       },
     );
   }
