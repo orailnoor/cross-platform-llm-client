@@ -74,12 +74,12 @@ class _ImageViewerState extends State<ImageViewer> {
     setState(() => _isSharing = true);
     try {
       final tempDir = await getTemporaryDirectory();
-      final fileName = 'privatelm_${DateTime.now().millisecondsSinceEpoch}.png';
+      final fileName = 'myai_${DateTime.now().millisecondsSinceEpoch}.png';
       final file = File('${tempDir.path}/$fileName');
       await file.writeAsBytes(_bytes);
       await Share.shareXFiles(
         [XFile(file.path)],
-        text: 'Generated with PrivateLM',
+        text: 'Generated with MyAI',
       );
     } catch (e) {
       if (mounted) {

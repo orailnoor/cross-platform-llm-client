@@ -15,7 +15,7 @@ class TunnelStartResult {
 
 class TunnelService {
   static const MethodChannel _channel =
-      MethodChannel('com.aichat.ai_chat/tunnel');
+      MethodChannel('com.myai.app/tunnel');
 
   Future<TunnelStartResult> start({
     required String provider,

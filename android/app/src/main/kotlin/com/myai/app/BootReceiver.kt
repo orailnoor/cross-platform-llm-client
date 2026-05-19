@@ -1,4 +1,4 @@
-package com.orailnoor.privatelm
+package com.myai.app
 
 import android.content.BroadcastReceiver
 import android.content.Context

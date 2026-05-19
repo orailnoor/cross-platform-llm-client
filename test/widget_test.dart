@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:privatelm/models/ai_model.dart';
+import 'package:myai/models/ai_model.dart';
 
 void main() {
   test('detects local model runtime from filename and template', () {

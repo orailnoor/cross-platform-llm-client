@@ -1,0 +1,3 @@
+[submodule "local_plugins/sd_flutter_android/android/src/main/cpp/stable-diffusion.cpp"]
+	path = local_plugins/sd_flutter_android/android/src/main/cpp/stable-diffusion.cpp
+	url = https://github.com/leejet/stable-diffusion.cpp.git
