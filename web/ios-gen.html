@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>Image Gen</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #000; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden; touch-action: manipulation;
+    }
+    #app {
+      display: flex; flex-direction: column; height: 100vh;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    }
+    h1 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.3px; }
+    .sub { font-size: 12px; color: #8e8e93; margin-bottom: 16px; }
+    .card {
+      background: #1c1c1e; border-radius: 16px; padding: 14px; margin-bottom: 12px;
+    }
+    label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: #8e8e93; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    textarea {
+      width: 100%; background: #2c2c2e; border: 1px solid #3a3a3c;
+      border-radius: 10px; padding: 12px 14px; color: #fff; font-size: 16px;
+      outline: none; -webkit-appearance: none; resize: none; height: 80px; font-family: inherit;
+    }
+    .btn {
+      width: 100%; padding: 14px; background: #0a84ff; color: #fff; border: none;
+      border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 10px;
+    }
+    .btn:disabled { background: #1c1c1e; color: #555; }
+    .status {
+      font-size: 12px; color: #8e8e93; margin-top: 10px;
+      font-family: "SF Mono", Menlo, monospace; line-height: 1.5;
+    }
+    .status .err { color: #ff453a; }
+    .status .ok { color: #30d158; }
+    .progress-wrap {
+      width: 100%; height: 4px; background: #2c2c2e; border-radius: 2px;
+      margin-top: 10px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; width: 0%; background: #0a84ff; border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .progress-bar.indeterminate {
+      width: 40%; animation: indeterminate 1s ease-in-out infinite alternate;
+    }
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(250%); }
+    }
+    #result {
+      flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+      margin-top: 12px; border-radius: 16px; overflow: hidden; background: #1c1c1e;
+    }
+    #result img {
+      max-width: 100%; max-height: 100%; object-fit: contain; display: block;
+    }
+    #result .placeholder {
+      color: #555; font-size: 14px; text-align: center; padding: 40px;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <h1>Image Gen</h1>
+  <div class="sub">Free AI Image Generation · iOS/iPad</div>
+
+  <div class="card">
+    <label>Prompt</label>
+    <textarea id="prompt" placeholder="e.g. portrait of a cyberpunk woman, neon lights, detailed">portrait of a woman, cinematic lighting, detailed face, 8k</textarea>
+    <button class="btn" id="btn-gen">Generate</button>
+    <div class="progress-wrap"><div class="progress-bar" id="bar"></div></div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div id="result">
+    <div class="placeholder">Image will appear here</div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const $ = id => document.getElementById(id);
+    const statusEl = $('status');
+    const bar = $('bar');
+    const btn = $('btn-gen');
+
+    function log(msg, type) {
+      const d = document.createElement('div');
+      d.textContent = msg;
+      if (type === 'err') d.style.color = '#ff453a';
+      if (type === 'ok') d.style.color = '#30d158';
+      statusEl.appendChild(d);
+    }
+    function clearLog() { statusEl.innerHTML = ''; }
+    function setProgress(pct) {
+      bar.classList.remove('indeterminate');
+      bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    }
+    function setIndeterminate() {
+      bar.style.width = '40%';
+      bar.classList.add('indeterminate');
+    }
+
+    btn.onclick = async () => {
+      const prompt = $('prompt').value.trim();
+      if (!prompt) return;
+      btn.disabled = true;
+      clearLog();
+      setIndeterminate();
+      log('Generating...');
+
+      try {
+        // Pollinations AI - free, no API key, returns image directly
+        const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt)
+          + '?width=512&height=512&seed=' + Math.floor(Math.random() * 999999)
+          + '&nologo=true&negative_prompt=blurry,low+quality';
+
+        // Load image
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          setProgress(100);
+          $('result').innerHTML = '';
+          $('result').appendChild(img);
+          log('Done!', 'ok');
+          btn.disabled = false;
+        };
+        img.onerror = () => {
+          log('Image load failed. Try again.', 'err');
+          btn.disabled = false;
+          setProgress(0);
+        };
+        img.src = url;
+      } catch (e) {
+        log('Error: ' + e.message, 'err');
+        btn.disabled = false;
+        setProgress(0);
+      }
+    };
+  })();
+</script>
+</body>
+</html>

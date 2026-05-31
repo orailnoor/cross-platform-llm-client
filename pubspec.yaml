@@ -30,8 +30,8 @@ dependencies:
   http: ^1.2.0
 
   # Firebase (Push Updates)
-  firebase_core: ^3.8.0
-  firebase_messaging: ^15.1.0
+  # firebase_core: ^3.8.0
+  # firebase_messaging: ^15.1.0
 
   # File System & Permissions
   path_provider: ^2.1.0
@@ -60,9 +60,9 @@ dependencies:
   gal: ^2.3.2
   syncfusion_flutter_pdf: ^33.2.6
   speech_to_text: ^7.0.0
-  firebase_crashlytics: ^4.3.10
+  # firebase_crashlytics: ^4.3.10
   package_info_plus: ^9.0.1
-  device_info_plus: ^12.4.0
+  device_info_plus: ^11.2.0
 
 dev_dependencies:
   flutter_test:

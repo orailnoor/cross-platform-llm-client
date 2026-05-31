@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
-import 'package:firebase_core/firebase_core.dart';
+// import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -94,10 +94,16 @@ void main() {
       return true;
     };
     final imageNotifications = Get.put(ImageGenerationNotificationService());
-    await imageNotifications.init();
-    await imageNotifications.configureBackgroundService();
+    try {
+      await imageNotifications.init();
+      await imageNotifications.configureBackgroundService();
+    } catch (e) {
+      appLog.error('[Notifications] Init failed', details: e);
+    }
+    appLog.info('Notifications initialized');
     Get.put(ServerController(), permanent: true);
     Get.put(ModelController());
+    appLog.info('All services initialized, launching app');
 
     // Auto-configure inference settings based on device RAM
     _autoConfigureForDevice();
