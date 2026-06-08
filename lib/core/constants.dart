@@ -283,6 +283,24 @@ class AppConstants {
       'description': 'Highly versatile Anime / Stylized image generator',
       'template': 'sd',
     },
+    {
+      'name': 'Apple SD 1.5 (CoreML NPU)',
+      'filename': 'coreml-stable-diffusion-v1-5_original_packages.zip',
+      'url':
+          'https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/main/coreml-stable-diffusion-v1-5_original_packages.zip',
+      'size': '2.1 GB',
+      'description': 'Official Apple CoreML model. Uses NPU for extreme battery savings.',
+      'template': 'sd',
+    },
+    {
+      'name': 'Apple SDXL Base (CoreML NPU)',
+      'filename': 'coreml-stable-diffusion-xl-base_original_packages.zip',
+      'url':
+          'https://huggingface.co/apple/coreml-stable-diffusion-xl-base/resolve/main/coreml-stable-diffusion-xl-base_original_packages.zip',
+      'size': '4.5 GB',
+      'description': 'Official Apple CoreML SDXL model. Optimized for M-series devices.',
+      'template': 'sd',
+    },
   ];
 
   // Cloud API Endpoints
