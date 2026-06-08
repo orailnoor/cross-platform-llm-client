@@ -285,19 +285,19 @@ class AppConstants {
     },
     {
       'name': 'Apple SD 1.5 (CoreML NPU)',
-      'filename': 'coreml-stable-diffusion-v1-5_original_packages.zip',
+      'filename': 'apple-sd-1-5.coreml',
       'url':
-          'https://huggingface.co/apple/coreml-stable-diffusion-v1-5/resolve/main/coreml-stable-diffusion-v1-5_original_packages.zip',
-      'size': '2.1 GB',
+          'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
+      'size': '1.5 GB',
       'description': 'Official Apple CoreML model. Uses NPU for extreme battery savings.',
       'template': 'sd',
     },
     {
       'name': 'Apple SDXL Base (CoreML NPU)',
-      'filename': 'coreml-stable-diffusion-xl-base_original_packages.zip',
+      'filename': 'apple-sdxl-base.coreml',
       'url':
-          'https://huggingface.co/apple/coreml-stable-diffusion-xl-base/resolve/main/coreml-stable-diffusion-xl-base_original_packages.zip',
-      'size': '4.5 GB',
+          'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
+      'size': '1.7 GB',
       'description': 'Official Apple CoreML SDXL model. Optimized for M-series devices.',
       'template': 'sd',
     },
