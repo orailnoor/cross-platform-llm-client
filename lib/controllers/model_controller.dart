@@ -54,7 +54,8 @@ class ModelController extends GetxController {
     'general',
     'image',
     'uncensored',
-    'vision'
+    'vision',
+    'npu'
   ];
 
   List<AiModel> get displayedModels {
@@ -92,6 +93,8 @@ class ModelController extends GetxController {
           return isVisionModel(model);
         case 'image':
           return isImageModel(model);
+        case 'npu':
+          return isNpuModel(model);
         case 'general':
         default:
           return isGeneralModel(model);
@@ -270,7 +273,13 @@ class ModelController extends GetxController {
   bool isGeneralModel(AiModel model) =>
       !isVisionModel(model) &&
       !isUncensoredModel(model) &&
-      !isImageModel(model);
+      !isImageModel(model) &&
+      !isNpuModel(model);
+
+  bool isNpuModel(AiModel model) {
+    final lower = model.filename.toLowerCase();
+    return lower.endsWith('.mlmodelc') || lower.endsWith('.mlpackage') || lower.contains('coreml');
+  }
 
   String modelSizeLabel(AiModel model) {
     final bytes = fileSizes[model.filename] ?? 0;
