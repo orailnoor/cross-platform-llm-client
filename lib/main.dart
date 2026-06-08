@@ -64,8 +64,20 @@ void main() {
     await Hive.initFlutter();
 
     // Register global services
-    await Get.putAsync(() => HiveService().init());
-    await Get.putAsync(() => DeviceInfoService().init());
+    await Get.putAsync(() => HiveService().init().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            appLog.error('HiveService.init timed out');
+            return HiveService();
+          },
+        ));
+    await Get.putAsync(() => DeviceInfoService().init().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            appLog.error('DeviceInfoService.init timed out');
+            return DeviceInfoService();
+          },
+        ));
 
     // Settings controller must be initialized before runApp for theme support
     final settingsController = Get.put(SettingsController());
@@ -75,8 +87,13 @@ void main() {
     Get.put(CloudService());
     Get.put(DownloadService());
     Get.put(LocalImageService());
-    final crashReporting =
-        await Get.putAsync(() => CrashReportingService().init());
+    final crashReporting = await Get.putAsync(() => CrashReportingService().init().timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            appLog.error('CrashReportingService.init timed out');
+            return CrashReportingService();
+          },
+        ));
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
       appLog.error(

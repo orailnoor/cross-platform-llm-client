@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -35,7 +36,7 @@ class ChatView extends GetView<ChatController> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
+    Widget scaffold = Scaffold(
       backgroundColor: isDark ? Colors.black : Colors.white,
       appBar: _appBar(context, isDark),
       body: Column(
@@ -75,6 +76,15 @@ class ChatView extends GetView<ChatController> {
         ],
       ),
     );
+
+    if (Platform.isIOS) {
+      return GestureDetector(
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        behavior: HitTestBehavior.translucent,
+        child: scaffold,
+      );
+    }
+    return scaffold;
   }
 
   // ── AppBar ──
@@ -554,7 +564,7 @@ class ChatView extends GetView<ChatController> {
               final backend = localImage.currentBackend.value;
               final backendLabel = backend == Backend.cpu
                   ? 'CPU'
-                  : backend.displayName.split(' ').first.toUpperCase();
+                  : (backend == Backend.metal ? 'APPLE NPU' : backend.displayName.split(' ').first.toUpperCase());
               final accent = backend == Backend.cpu
                   ? const Color(0xFFFF9500)
                   : const Color(0xFF34C759);
@@ -1231,7 +1241,7 @@ class _ImageGenIndicatorState extends State<_ImageGenIndicator>
         border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
       ),
       child: Text(
-        isCpu ? 'CPU · Slow' : backend.displayName.split(' ').first.toUpperCase(),
+        isCpu ? 'CPU · Slow' : (backend == Backend.metal ? 'APPLE NPU' : backend.displayName.split(' ').first.toUpperCase()),
         style: GoogleFonts.inter(
           fontSize: 9,
           fontWeight: FontWeight.w600,

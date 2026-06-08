@@ -179,6 +179,7 @@ class ModelView extends GetView<ModelController> {
       'image': 'Image Gen',
       'uncensored': 'Uncensored',
       'vision': 'Vision',
+      'npu': 'Apple NPU',
     };
     return Obx(() {
       final selected = controller.localFilter.value.isEmpty

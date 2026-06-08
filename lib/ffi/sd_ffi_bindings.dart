@@ -97,6 +97,7 @@ enum Backend {
   cpu,
   vulkan,
   opencl,
+  metal,
 }
 
 extension BackendExtension on Backend {
@@ -108,6 +109,8 @@ extension BackendExtension on Backend {
         return 'Vulkan (GPU)';
       case Backend.opencl:
         return 'OpenCL (GPU)';
+      case Backend.metal:
+        return 'Apple NPU';
     }
   }
 
@@ -119,6 +122,8 @@ extension BackendExtension on Backend {
         return 'libsd_jni_vulkan.so';
       case Backend.opencl:
         return 'libsd_jni_opencl.so';
+      case Backend.metal:
+        return 'libsd_metal.dylib';
     }
   }
 

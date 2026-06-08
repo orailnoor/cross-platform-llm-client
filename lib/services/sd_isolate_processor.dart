@@ -80,61 +80,72 @@ class SdIsolateProcessor {
   }
 
   Future<void> _spawnIsolate() async {
-    _isolate = await Isolate.spawn(
-      _isolateEntryPoint,
-      {
-        'port': _receivePort.sendPort,
-        'modelPath': modelPath,
-        'nThreads': nThreads,
-        'flashAttn': flashAttn,
-        'vaeTiling': vaeTiling,
-        'taesdPath': taesdPath,
-        'vaePath': vaePath,
-        'clipLPath': clipLPath,
-        'backend': backend.index,
-        'quantizationType': quantizationType.nativeValue,
-        'offloadParamsToCpu': offloadParamsToCpu,
-        'enableMmap': enableMmap,
-        'keepVaeOnCpu': keepVaeOnCpu,
-        'maxVram': maxVram,
-      },
-    );
+    try {
+      _isolate = await Isolate.spawn(
+        _isolateEntryPoint,
+        {
+          'port': _receivePort.sendPort,
+          'modelPath': modelPath,
+          'nThreads': nThreads,
+          'flashAttn': flashAttn,
+          'vaeTiling': vaeTiling,
+          'taesdPath': taesdPath,
+          'vaePath': vaePath,
+          'clipLPath': clipLPath,
+          'backend': backend.index,
+          'quantizationType': quantizationType.nativeValue,
+          'offloadParamsToCpu': offloadParamsToCpu,
+          'enableMmap': enableMmap,
+          'keepVaeOnCpu': keepVaeOnCpu,
+          'maxVram': maxVram,
+        },
+      );
 
-    _receivePort.listen((message) {
-      if (message is SendPort) {
-        _sendPort = message;
-        _initCompleter.complete();
-        return;
-      }
-      if (message is Map) {
-        switch (message['type']) {
-          case 'progress':
-            _progressController.add(ProgressUpdate(
-              message['step'],
-              message['steps'],
-              (message['time'] as num).toDouble(),
-            ));
-            break;
-          case 'log':
-            _logController.add(LogMessage(
-              message['level'],
-              message['message'],
-            ));
-            break;
-          case 'result':
-            _handleResult(message);
-            break;
-          case 'modelLoaded':
-            if (!_modelLoadedCompleter.isCompleted) {
-              _modelLoadedCompleter.complete(true);
-            }
-            break;
-          case 'error':
-            _handleError(message['message']);
-            break;
+      _receivePort.listen((message) {
+        if (message is SendPort) {
+          _sendPort = message;
+          _initCompleter.complete();
+          return;
         }
+        if (message is Map) {
+          switch (message['type']) {
+            case 'progress':
+              _progressController.add(ProgressUpdate(
+                message['step'],
+                message['steps'],
+                (message['time'] as num).toDouble(),
+              ));
+              break;
+            case 'log':
+              _logController.add(LogMessage(
+                message['level'],
+                message['message'],
+              ));
+              break;
+            case 'result':
+              _handleResult(message);
+              break;
+            case 'modelLoaded':
+              if (!_modelLoadedCompleter.isCompleted) {
+                _modelLoadedCompleter.complete(true);
+              }
+              break;
+            case 'error':
+              _handleError(message['message']);
+              break;
+          }
+        }
+      });
+    } catch (e) {
+      print('[SdIsolateProcessor] Isolate.spawn failed: $e');
+      if (!_modelLoadedCompleter.isCompleted) {
+        _modelLoadedCompleter.complete(false);
       }
-    });
+      final completer = _activeCompleter;
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(GenerationResult(error: 'Isolate.spawn failed: $e'));
+      }
+    }
   }
 
   void _handleResult(Map message) {

@@ -161,6 +161,29 @@ class LocalImageService extends GetxService {
         print('[LocalImageService] File check error: $e');
       }
 
+      if (Platform.isIOS) {
+        print('[LocalImageService] Using iOS MethodChannel backend...');
+        final modelLoaded = await SdFlutterAndroid.initModel(modelPath, useGpu: true);
+        if (!modelLoaded) {
+          isModelLoaded.value = false;
+          isLoadingModel.value = false;
+          Get.find<AppLogService>().error(
+            'Image model load failed on iOS',
+            details: 'path=$modelPath',
+          );
+          return 'Failed to load model on iOS backend.';
+        }
+
+        currentBackend.value = Backend.metal; // Show NPU on iOS UI
+        isUsingGpu.value = true;
+        isModelLoaded.value = true;
+        isLoadingModel.value = false;
+        loadedModelName.value = modelName ?? modelPath.split('/').last;
+        await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
+        await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
+        return 'Image model loaded successfully.';
+      }
+
       String vendor = 'unknown';
       bool useGpu = true;
       if (Platform.isAndroid) {
@@ -266,8 +289,12 @@ class LocalImageService extends GetxService {
   }
 
   Future<void> unloadModel() async {
-    await _processor?.dispose();
-    _processor = null;
+    if (Platform.isIOS) {
+      await SdFlutterAndroid.unloadModel();
+    } else {
+      await _processor?.dispose();
+      _processor = null;
+    }
     isModelLoaded.value = false;
     loadedModelName.value = '';
     gpuVendor.value = 'unknown';
@@ -301,7 +328,8 @@ class LocalImageService extends GetxService {
     required String prompt,
     void Function(int step, int totalSteps)? onProgress,
   }) async {
-    if (!isModelLoaded.value || _processor == null) return null;
+    if (!isModelLoaded.value) return null;
+    if (!Platform.isIOS && _processor == null) return null;
     if (isGenerating.value) return null;
 
     isGenerating.value = true;
@@ -339,27 +367,43 @@ class LocalImageService extends GetxService {
       print(
           '[LocalImageService] generateImage start: prompt="$prompt", backend=${currentBackend.value.displayName}, size=${imageSize}x$imageSize, steps=$effectiveSteps, availableRam=${availableRamMb}MB, sizeMode=${selectedImageSize == 0 ? "auto" : "fixed"}');
 
-      // Subscribe to progress and log streams
-      progressSub = _processor!.progressStream.listen((update) {
-        print(
-            '[LocalImageService] Progress: step ${update.step}/${update.totalSteps}');
-        onProgress?.call(update.step, update.totalSteps);
-      });
-      logSub = _processor!.logStream.listen((log) {
-        print('[LocalImageService] Log [L${log.level}]: ${log.message}');
-        latestLog.value = log.message;
-      });
+      GenerationResult? result;
 
-      final result = await _processor!.generate(
-        prompt: prompt,
-        width: imageSize,
-        height: imageSize,
-        steps: effectiveSteps,
-        // Future: expose width, height, seed, cfg, negativePrompt, sampleMethod from settings
-      );
+      if (Platform.isIOS) {
+        final bytes = await SdFlutterAndroid.generateImage(
+          prompt,
+          steps: effectiveSteps,
+          onProgress: onProgress,
+        );
+        result = GenerationResult(
+          rgbBytes: bytes,
+          width: imageSize, // the iOS wrapper hardcodes 512x512 currently
+          height: imageSize,
+          error: bytes == null ? 'Failed to generate on iOS' : null,
+        );
+      } else {
+        // Subscribe to progress and log streams
+        progressSub = _processor!.progressStream.listen((update) {
+          print(
+              '[LocalImageService] Progress: step ${update.step}/${update.totalSteps}');
+          onProgress?.call(update.step, update.totalSteps);
+        });
+        logSub = _processor!.logStream.listen((log) {
+          print('[LocalImageService] Log [L${log.level}]: ${log.message}');
+          latestLog.value = log.message;
+        });
 
-      await progressSub.cancel();
-      await logSub.cancel();
+        result = await _processor!.generate(
+          prompt: prompt,
+          width: imageSize,
+          height: imageSize,
+          steps: effectiveSteps,
+          // Future: expose width, height, seed, cfg, negativePrompt, sampleMethod from settings
+        );
+
+        await progressSub.cancel();
+        await logSub.cancel();
+      }
 
       print(
           '[LocalImageService] Generation result: error=${result.error}, bytes=${result.rgbBytes?.length}, ${result.width}x${result.height}');
@@ -379,13 +423,28 @@ class LocalImageService extends GetxService {
       // TODO: switch to ui.decodeImageFromPixels for GPU-accelerated decode
       print(
           '[LocalImageService] Encoding ${result.width}x${result.height} RGB to PNG...');
-      final image = img.Image.fromBytes(
-        width: result.width,
-        height: result.height,
-        bytes: result.rgbBytes!.buffer,
-        numChannels: 3,
-      );
-      final pngBytes = Uint8List.fromList(img.encodePng(image));
+      
+      Uint8List pngBytes;
+      if (Platform.isIOS) {
+        // iOS wrapper already returns RGB data. Wait, actually `SdIosWrapper.mm` returns raw RGB bytes.
+        // We still need to encode it to PNG.
+        final image = img.Image.fromBytes(
+          width: 512, // iOS wrapper hardcodes 512x512 currently
+          height: 512,
+          bytes: result.rgbBytes!.buffer,
+          numChannels: 3,
+        );
+        pngBytes = Uint8List.fromList(img.encodePng(image));
+      } else {
+        final image = img.Image.fromBytes(
+          width: result.width,
+          height: result.height,
+          bytes: result.rgbBytes!.buffer,
+          numChannels: 3,
+        );
+        pngBytes = Uint8List.fromList(img.encodePng(image));
+      }
+      
       print('[LocalImageService] PNG encoded: ${pngBytes.length} bytes');
 
       isGenerating.value = false;
