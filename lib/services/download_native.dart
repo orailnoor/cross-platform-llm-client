@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
+import 'package:archive/archive_io.dart';
 
 final Dio _dio = Dio();
 final Map<String, CancelToken> _cancelTokens = {};
@@ -26,7 +27,10 @@ Future<List<String>> getDownloadedModels(String modelsDir) async {
       .where((f) =>
           f.path.endsWith('.gguf') ||
           f.path.endsWith('.litertlm') ||
-          f.path.endsWith('.safetensors'))
+          f.path.endsWith('.safetensors') ||
+          f.path.endsWith('.coreml') ||
+          f.path.endsWith('.mlpackage') ||
+          f.path.endsWith('.mlmodelc'))
       .map((f) => f.path.split('/').last)
       .toList();
 }
@@ -147,6 +151,13 @@ Future<String> downloadModel({
       await finalFile.delete();
     }
     await tempFile.rename(savePath);
+
+    if (savePath.toLowerCase().endsWith('.zip')) {
+      final modelsDir = finalFile.parent.path;
+      extractFileToDisk(savePath, modelsDir);
+      await File(savePath).delete();
+    }
+
     _cancelTokens.remove(filename);
     return savePath;
   } on DioException catch (e) {

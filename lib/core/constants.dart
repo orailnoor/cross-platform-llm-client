@@ -257,6 +257,22 @@ class AppConstants {
       'template': 'sd',
     },
     {
+      'name': 'CyberRealistic (Apple CoreML FP16)',
+      'filename': 'cyberrealistic.coreml.zip',
+      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic.coreml.zip?download=true',
+      'size': '2.0 GB',
+      'description': 'Optimized for Apple devices with M-series chips or 8GB+ RAM',
+      'template': 'sd',
+    },
+    {
+      'name': 'CyberRealistic (Apple CoreML 6-bit)',
+      'filename': 'cyberrealistic-6bit.coreml.zip',
+      'url': 'https://huggingface.co/orailnooor/cyberrealistic-coreml/resolve/main/cyberrealistic-6bit.coreml.zip?download=true',
+      'size': '1.0 GB',
+      'description': 'Compressed 6-bit model optimized for Apple devices with 4GB/6GB RAM',
+      'template': 'sd',
+    },
+    {
       'name': 'Realistic Vision V5.1 fp16 (SD 1.5)',
       'filename': 'Realistic_Vision_V5.1_fp16-no-ema.safetensors',
       'url':

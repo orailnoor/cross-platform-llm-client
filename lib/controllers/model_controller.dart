@@ -153,7 +153,12 @@ class ModelController extends GetxController {
     }
 
     // Add any downloaded files that are not in availableModels
-    final existingFilenames = availableModels.map((m) => m.filename).toSet();
+    final existingFilenames = availableModels.map((m) {
+      if (m.filename.toLowerCase().endsWith('.zip')) {
+        return m.filename.substring(0, m.filename.length - 4);
+      }
+      return m.filename;
+    }).toSet();
     for (final file in files) {
       if (!existingFilenames.contains(file)) {
         final lower = file.toLowerCase();
@@ -190,7 +195,12 @@ class ModelController extends GetxController {
     }
   }
 
-  bool isDownloaded(String filename) => downloadedFiles.contains(filename);
+  bool isDownloaded(String filename) {
+    if (filename.toLowerCase().endsWith('.zip')) {
+      return downloadedFiles.contains(filename.substring(0, filename.length - 4));
+    }
+    return downloadedFiles.contains(filename);
+  }
 
   bool _isAuxiliaryImageFile(String filename) {
     final lower = filename.toLowerCase();
@@ -257,6 +267,9 @@ class ModelController extends GetxController {
     final lower = model.filename.toLowerCase();
     return model.runtime == AiModel.runtimeSd ||
         lower.endsWith('.safetensors') ||
+        lower.endsWith('.coreml') ||
+        lower.endsWith('.mlpackage') ||
+        lower.endsWith('.mlmodelc') ||
         model.template == 'sd';
   }
 

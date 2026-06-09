@@ -63,6 +63,7 @@ dependencies:
   # firebase_crashlytics: ^4.3.10
   package_info_plus: ^9.0.1
   device_info_plus: ^11.2.0
+  archive: ^4.0.9
 
 dev_dependencies:
   flutter_test:

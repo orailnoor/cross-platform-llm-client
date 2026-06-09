@@ -189,6 +189,19 @@ class ChatView extends GetView<ChatController> {
         );
       }),
       actions: [
+        Obx(() {
+          final isLocal = Get.find<SettingsController>().inferenceMode.value == 'local';
+          final inf = Get.find<InferenceService>();
+          final localImage = Get.find<LocalImageService>();
+          if (isLocal && (inf.isModelLoaded.value || localImage.isModelLoaded.value)) {
+            return IconButton(
+              tooltip: 'Unload Model',
+              icon: const Icon(Icons.eject_outlined, size: 20, color: Color(0xFFFF3B30)),
+              onPressed: () => Get.find<ModelController>().unloadModel(),
+            );
+          }
+          return const SizedBox.shrink();
+        }),
         IconButton(
             icon: Icon(Icons.history_rounded,
                 size: 20, color: Theme.of(context).hintColor),

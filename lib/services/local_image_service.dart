@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show File, Platform;
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 import 'package:sd_flutter_android/sd_flutter_android.dart';
@@ -162,26 +163,49 @@ class LocalImageService extends GetxService {
       }
 
       if (Platform.isIOS) {
-        print('[LocalImageService] Using iOS MethodChannel backend...');
-        final modelLoaded = await SdFlutterAndroid.initModel(modelPath, useGpu: true);
-        if (!modelLoaded) {
-          isModelLoaded.value = false;
-          isLoadingModel.value = false;
-          Get.find<AppLogService>().error(
-            'Image model load failed on iOS',
-            details: 'path=$modelPath',
-          );
-          return 'Failed to load model on iOS backend.';
-        }
+        final isCoreML = modelPath.toLowerCase().endsWith('.mlmodelc') || modelPath.toLowerCase().endsWith('.mlpackage') || modelPath.toLowerCase().endsWith('.coreml');
+        
+        if (isCoreML) {
+          print('[LocalImageService] Using Apple CoreML backend...');
+          final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+          final result = await coreMlChannel.invokeMethod('initModel', {'path': modelPath});
+          
+          if (result is String && result.contains('loaded successfully')) {
+            currentBackend.value = Backend.metal; // Show NPU on iOS UI
+            isUsingGpu.value = true;
+            isModelLoaded.value = true;
+            isLoadingModel.value = false;
+            loadedModelName.value = modelName ?? modelPath.split('/').last;
+            await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
+            await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
+            return 'Image model loaded successfully.';
+          } else {
+            isModelLoaded.value = false;
+            isLoadingModel.value = false;
+            return 'Failed to load CoreML model.';
+          }
+        } else {
+          print('[LocalImageService] Using standard Metal C++ backend...');
+          final modelLoaded = await SdFlutterAndroid.initModel(modelPath, useGpu: true);
+          if (!modelLoaded) {
+            isModelLoaded.value = false;
+            isLoadingModel.value = false;
+            Get.find<AppLogService>().error(
+              'Image model load failed on iOS',
+              details: 'path=$modelPath',
+            );
+            return 'Failed to load model on iOS backend.';
+          }
 
-        currentBackend.value = Backend.metal; // Show NPU on iOS UI
-        isUsingGpu.value = true;
-        isModelLoaded.value = true;
-        isLoadingModel.value = false;
-        loadedModelName.value = modelName ?? modelPath.split('/').last;
-        await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
-        await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
-        return 'Image model loaded successfully.';
+          currentBackend.value = Backend.vulkan; // Standard GPU rendering
+          isUsingGpu.value = true;
+          isModelLoaded.value = true;
+          isLoadingModel.value = false;
+          loadedModelName.value = modelName ?? modelPath.split('/').last;
+          await _hive.setSetting(AppConstants.keyImageModelPath, modelPath);
+          await _hive.setSetting(AppConstants.keyImageModelName, loadedModelName.value);
+          return 'Image model loaded successfully.';
+        }
       }
 
       String vendor = 'unknown';
@@ -289,18 +313,26 @@ class LocalImageService extends GetxService {
   }
 
   Future<void> unloadModel() async {
-    if (Platform.isIOS) {
-      await SdFlutterAndroid.unloadModel();
-    } else {
-      await _processor?.dispose();
-      _processor = null;
-    }
+    print('[LocalImageService] Unloading model...');
     isModelLoaded.value = false;
     loadedModelName.value = '';
-    gpuVendor.value = 'unknown';
-    isUsingGpu.value = false;
+    latestLog.value = '';
+    if (Platform.isIOS) {
+      if (currentBackend.value == Backend.metal) {
+        final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+        await coreMlChannel.invokeMethod('unloadModel');
+      } else {
+        await SdFlutterAndroid.unloadModel();
+      }
+    } else {
+      if (_processor != null) {
+        await _processor!.dispose();
+        _processor = null;
+      }
+    }
     await _hive.setSetting(AppConstants.keyImageModelPath, '');
     await _hive.setSetting(AppConstants.keyImageModelName, '');
+    print('[LocalImageService] Model unloaded.');
   }
 
   /// Change the inference backend (CPU / Vulkan / etc).
@@ -342,7 +374,7 @@ class LocalImageService extends GetxService {
           AppConstants.defaultImageSteps;
       final effectiveSteps = currentBackend.value == Backend.cpu
           ? requestedSteps.clamp(1, 20).toInt()
-          : requestedSteps.clamp(1, 8).toInt();
+          : requestedSteps.clamp(1, 50).toInt();
 
       int availableRamMb = 0;
       if (Platform.isAndroid) {
@@ -370,17 +402,43 @@ class LocalImageService extends GetxService {
       GenerationResult? result;
 
       if (Platform.isIOS) {
-        final bytes = await SdFlutterAndroid.generateImage(
-          prompt,
-          steps: effectiveSteps,
-          onProgress: onProgress,
-        );
-        result = GenerationResult(
-          rgbBytes: bytes,
-          width: imageSize, // the iOS wrapper hardcodes 512x512 currently
-          height: imageSize,
-          error: bytes == null ? 'Failed to generate on iOS' : null,
-        );
+        if (currentBackend.value == Backend.metal) {
+          // CoreML Route
+          final coreMlChannel = MethodChannel('coreml_stable_diffusion');
+          coreMlChannel.setMethodCallHandler((call) async {
+            if (call.method == 'onProgress') {
+              final args = call.arguments as Map;
+              onProgress?.call((args['step'] as num).toInt(), (args['total'] as num).toInt());
+            }
+          });
+          
+          final bytes = await coreMlChannel.invokeMethod<Uint8List>('generateImage', {
+            'prompt': prompt,
+            'steps': effectiveSteps,
+          });
+          
+          coreMlChannel.setMethodCallHandler(null);
+          
+          if (bytes != null) {
+            isGenerating.value = false;
+            return bytes; // CoreML returns PNG directly
+          } else {
+            result = GenerationResult(rgbBytes: null, width: imageSize, height: imageSize, error: 'Failed to generate on CoreML');
+          }
+        } else {
+          // Standard C++ Metal Route
+          final bytes = await SdFlutterAndroid.generateImage(
+            prompt,
+            steps: effectiveSteps,
+            onProgress: onProgress,
+          );
+          result = GenerationResult(
+            rgbBytes: bytes,
+            width: imageSize,
+            height: imageSize,
+            error: bytes == null ? 'Failed to generate on iOS' : null,
+          );
+        }
       } else {
         // Subscribe to progress and log streams
         progressSub = _processor!.progressStream.listen((update) {

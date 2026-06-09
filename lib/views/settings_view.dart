@@ -546,14 +546,14 @@ class SettingsView extends GetView<SettingsController> {
           ]),
           Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text('Recommended max: 8',
+              child: Text('Recommended: 15-20 steps',
                   style: GoogleFonts.inter(
                       fontSize: 12, color: Theme.of(context).hintColor))),
           Slider(
-              value: stepsValue.clamp(1, 20),
+              value: stepsValue.clamp(1, 50),
               min: 1,
-              max: 20,
-              divisions: 19,
+              max: 50,
+              divisions: 49,
               activeColor: accent,
               onChanged: (v) => controller.setImageSteps(v.toInt())),
           if (isOver)
