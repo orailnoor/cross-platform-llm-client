@@ -61,6 +61,7 @@ class AppConstants {
   static const String keyImageGenSize = 'image_gen_size';
   static const String keyImageGenQuantization = 'image_gen_quantization';
   static const String keyFontScale = 'font_scale';
+  static const String keyBatchModeWarningAccepted = 'batch_mode_warning_accepted';
 
   // Default Model Config
   static const double defaultTemperature = 0.7;

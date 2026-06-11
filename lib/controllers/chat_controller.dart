@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:uuid/uuid.dart';
+import 'package:gal/gal.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
 import '../models/chat_message.dart';
@@ -67,6 +68,11 @@ class ChatController extends GetxController {
   final selectedFileType = Rxn<String>();
   final selectedFileSize = 0.obs;
 
+  // Batch Image Generation
+  final batchPrompts = <String>[].obs;
+  final batchModeAccepted = false.obs;
+  final lastBatchImagesBase64 = <String>[].obs;
+
   // Real-time streaming state — the AI response as it's being generated
   final streamingResponse = ''.obs;
   final isStreaming = false.obs;
@@ -96,6 +102,7 @@ class ChatController extends GetxController {
     super.onInit();
     scrollController.addListener(_handleUserScroll);
     _scrollListenerAttached = true;
+    batchModeAccepted.value = _hive.getSetting<bool>(AppConstants.keyBatchModeWarningAccepted, defaultValue: false) ?? false;
     loadSessions();
     _initSpeech();
   }
@@ -158,6 +165,11 @@ class ChatController extends GetxController {
   }
 
   // ─── Session Management ─────────────────────────
+
+  void acceptBatchMode() {
+    batchModeAccepted.value = true;
+    _hive.setSetting(AppConstants.keyBatchModeWarningAccepted, true);
+  }
 
   void loadSessions() {
     final raw = _hive.getAllSessions();
@@ -446,6 +458,64 @@ class ChatController extends GetxController {
   }
 
   // ─── Send Message ───────────────────────────────
+
+  Future<void> generateBatch() async {
+    if (batchPrompts.isEmpty || isLoading.value || isStreaming.value) return;
+    
+    // Copy the list to avoid concurrent modification issues
+    final promptsToRun = List<String>.from(batchPrompts);
+    batchPrompts.clear();
+    lastBatchImagesBase64.clear();
+
+    final generatedImagesBase64 = <String>[];
+
+    for (final prompt in promptsToRun) {
+      textController.text = prompt;
+      await sendMessage();
+      final expectedSerial = _generationSerial;
+      
+      // Wait until the single image generation completes before starting the next
+      while (isLoading.value) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      
+      if (_generationSerial != expectedSerial) break; // User stopped it
+
+      // Capture generated image
+      final lastMsg = messages.lastOrNull;
+      if (lastMsg != null && lastMsg.role == 'assistant' && lastMsg.imageBase64 != null) {
+        generatedImagesBase64.add(lastMsg.imageBase64!);
+      }
+      
+      // Add a small delay between generations to let UI breathe
+      await Future.delayed(const Duration(milliseconds: 1000));
+    }
+
+    if (generatedImagesBase64.isNotEmpty) {
+      lastBatchImagesBase64.value = generatedImagesBase64;
+    }
+  }
+
+  Future<void> downloadLastBatch() async {
+    if (lastBatchImagesBase64.isEmpty) return;
+    try {
+      final hasAccess = await Gal.hasAccess();
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess();
+        if (!granted) {
+          Get.snackbar('Permission Denied', 'Cannot save images without gallery access.');
+          return;
+        }
+      }
+      for (final base64 in lastBatchImagesBase64) {
+        await Gal.putImageBytes(base64Decode(base64));
+      }
+      Get.snackbar('Success', 'Saved ${lastBatchImagesBase64.length} images to gallery.', backgroundColor: const Color(0xFF34C759).withValues(alpha: 0.9), colorText: const Color(0xFFFFFFFF));
+      lastBatchImagesBase64.clear();
+    } catch (e) {
+      Get.snackbar('Error', 'Failed to save images: $e');
+    }
+  }
 
   Future<void> sendMessage() async {
     if (isLoading.value || isStreaming.value) return;

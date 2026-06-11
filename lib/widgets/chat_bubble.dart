@@ -21,6 +21,12 @@ class ChatBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Premium Generated Image Card (Assistant only)
+    if (!isUser && message.decodedImageBytes != null) {
+      return _buildGeneratedImageCard(context, isDark);
+    }
+
     final visibleContent = message.fileName == null
         ? message.content
         : message.content.split('\n\nAttached file:').first;
@@ -53,27 +59,40 @@ class ChatBubble extends StatelessWidget {
               // Image attachment
               if (message.decodedImageBytes != null)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: GestureDetector(
                     onTap: () => ImageViewer.show(context, message.imageBase64!),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(14),
-                      child: Image.memory(
-                        message.decodedImageBytes!,
-                        width: double.infinity,
-                        height: 200,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => Container(
-
-                          height: 100,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? Colors.white.withValues(alpha: 0.05)
-                                : Colors.black.withValues(alpha: 0.05),
-                            borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isDark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.1),
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
                           ),
-                          child: const Center(child: Icon(Icons.broken_image_rounded, size: 28)),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(15),
+                        child: Image.memory(
+                          message.decodedImageBytes!,
+                          width: double.infinity,
+                          // Omit height and fit to allow the image to scale naturally without cropping
+                          gaplessPlayback: true,
+                          errorBuilder: (_, __, ___) => Container(
+                            height: 150,
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.05)
+                                  : Colors.black.withValues(alpha: 0.05),
+                            ),
+                            child: const Center(child: Icon(Icons.broken_image_rounded, size: 28)),
+                          ),
                         ),
                       ),
                     ),
@@ -254,5 +273,85 @@ class ChatBubble extends StatelessWidget {
         .replaceAll('<|im_end|>', '')
         .replaceAll('<|end|>', '')
         .trim();
+  }
+
+  Widget _buildGeneratedImageCard(BuildContext context, bool isDark) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: GestureDetector(
+          onTap: () => ImageViewer.show(context, message.imageBase64!),
+          child: Container(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.82,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isDark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.1),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(19),
+              child: Stack(
+                children: [
+                  Image.memory(
+                    message.decodedImageBytes!,
+                    width: double.infinity,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 150,
+                      color: isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7),
+                      child: const Center(child: Icon(Icons.broken_image_rounded, size: 28)),
+                    ),
+                  ),
+                  // Time elapsed overlay
+                  if (message.imageGenDurationMs != null && message.imageGenDurationMs! > 0)
+                    Positioned(
+                      bottom: 10,
+                      right: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.2), width: 0.5),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.2),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.timer_outlined, size: 10, color: Colors.white),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatGenTime(message.imageGenDurationMs!),
+                              style: GoogleFonts.inter(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

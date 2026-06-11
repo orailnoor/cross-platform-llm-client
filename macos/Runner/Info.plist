@@ -28,5 +28,13 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app requires access to Speech Recognition to convert your voice into text for chat prompts.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app requires microphone access to record your voice for speech-to-text.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs access to your photo library to select images to chat about.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>This app needs access to save generated images to your gallery.</string>
 </dict>
 </plist>

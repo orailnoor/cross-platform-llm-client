@@ -656,6 +656,93 @@ class ChatView extends GetView<ChatController> {
                 ),
               );
             }),
+            Obx(() {
+              if (controller.lastBatchImagesBase64.isEmpty) return const SizedBox.shrink();
+              return Container(
+                margin: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF34C759).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF34C759).withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF34C759)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Batch complete! (${controller.lastBatchImagesBase64.length} images)',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: isDark ? Colors.white : Colors.black),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => controller.lastBatchImagesBase64.clear(),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        minimumSize: const Size(0, 32),
+                        foregroundColor: Theme.of(context).hintColor,
+                      ),
+                      child: const Text('Dismiss'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: () => controller.downloadLastBatch(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF34C759),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        minimumSize: const Size(0, 32),
+                      ),
+                      icon: const Icon(Icons.download_rounded, size: 16),
+                      label: const Text('Save All'),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            Obx(() {
+              if (controller.batchPrompts.isEmpty) return const SizedBox.shrink();
+              return Container(
+                margin: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _appleBlue(context).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _appleBlue(context).withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.layers_rounded, size: 18, color: _appleBlue(context)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${controller.batchPrompts.length}/20 batch prompts',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13, color: isDark ? Colors.white : Colors.black),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => controller.batchPrompts.clear(),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        minimumSize: const Size(0, 32),
+                        foregroundColor: Colors.redAccent,
+                      ),
+                      child: const Text('Clear'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: controller.isLoading.value ? null : () => controller.generateBatch(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _appleBlue(context),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        minimumSize: const Size(0, 32),
+                      ),
+                      child: const Text('Start Batch'),
+                    ),
+                  ],
+                ),
+              );
+            }),
             Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
               // Attach button (image + file) — shown for cloud & local vision
               Obx(() {
@@ -705,6 +792,85 @@ class ChatView extends GetView<ChatController> {
                 ),
               )),
               const SizedBox(width: 6),
+              // Batch add button
+              Obx(() {
+                final settings = Get.find<SettingsController>();
+                final localImage = Get.find<LocalImageService>();
+                if (settings.inferenceMode.value == 'local' && 
+                    localImage.isModelLoaded.value && 
+                    localImage.currentBackend.value == Backend.metal) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: GestureDetector(
+                      onLongPress: () {
+                        // Testing mode: Populate batch with 15 fresh alternative prompts
+                        final testPrompts = [
+                          "Portrait of a goth girl with dark makeup, realistic photography, 8k",
+                          "Realistic photo of an elf girl in a forest, cinematic lighting",
+                          "A fluffy orange cat sleeping on a sunny couch, photorealistic",
+                          "A handsome man in a sharp suit, realistic portrait, studio lighting",
+                          "A futuristic city street at night, realistic photography",
+                          "A beautiful young woman with freckles, natural sunlight",
+                          "A majestic lion resting in the savanna, highly detailed",
+                          "An old man with a weathered face, realistic portrait, high detail",
+                          "A delicious looking cup of coffee on a wooden table, macro photography",
+                          "A medieval knight holding a sword, realistic cinematic lighting",
+                          "A golden retriever playing fetch, sharp focus, photography",
+                          "A realistic cyberpunk character with neon reflections",
+                          "A vintage muscle car driving down a desert highway, photorealistic",
+                          "A serene mountain lake at sunrise, realistic landscape photography",
+                          "A close-up of a beautiful eye with detailed iris, macro shot"
+                        ];
+                        // Shuffle them before adding
+                        testPrompts.shuffle();
+                        controller.batchPrompts.clear();
+                        controller.batchPrompts.addAll(testPrompts);
+                        Get.snackbar('Test Mode', 'Added 15 test prompts to the batch.', backgroundColor: const Color(0xFF34C759).withValues(alpha: 0.9), colorText: Colors.white);
+                      },
+                      onTap: () async {
+                        final text = controller.textController.text.trim();
+                        if (text.isEmpty) return;
+                        if (controller.batchPrompts.length >= 20) {
+                          Get.snackbar('Batch Limit', 'You can only add up to 20 prompts per batch.');
+                          return;
+                        }
+                        if (!controller.batchModeAccepted.value) {
+                          final accepted = await Get.dialog<bool>(
+                            AlertDialog(
+                              backgroundColor: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+                              title: Text('Batch Generation', style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black)),
+                              content: Text('Generating multiple images back-to-back is demanding. Your device may become warm and use more battery.', style: GoogleFonts.inter(color: isDark ? Colors.white70 : Colors.black87)),
+                              actions: [
+                                TextButton(onPressed: () => Get.back(result: false), child: const Text('Cancel')),
+                                FilledButton(
+                                  onPressed: () => Get.back(result: true), 
+                                  style: FilledButton.styleFrom(backgroundColor: _appleBlue(context)),
+                                  child: const Text('Continue')
+                                ),
+                              ],
+                            ),
+                          );
+                          if (accepted != true) return;
+                          controller.acceptBatchMode();
+                        }
+                        controller.batchPrompts.add(text);
+                        controller.textController.clear();
+                        controller.inputText.value = '';
+                      },
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: _appleBlue(context).withValues(alpha: 0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.add_rounded, size: 22, color: _appleBlue(context)),
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }),
               // Unified mic / send / stop button
               Obx(() {
                 final loading = controller.isLoading.value;

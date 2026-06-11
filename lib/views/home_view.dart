@@ -31,8 +31,8 @@ class HomeView extends GetView<HomeController> {
   ];
 
   bool get _isWide {
-    if (kIsWeb) return true;
-    return Get.width >= 800;
+    // Force bottom navbar for all layouts per user request
+    return false;
   }
 
   @override
