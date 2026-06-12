@@ -94,8 +94,27 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 | iOS      | ✅ Yes         | ✅ Yes     | Metal GPU acceleration |
 | Web      | ❌ No          | ✅ Yes     | Cloud-only (local coming soon) |
 
-### iOS / iPad
-The iPad release is distributed as a standalone ZIP package for sideloading. Download the latest `PrivateLM-iOS.zip` from the [Releases](https://github.com/orailnoor/ai_chat/releases) page, extract it, and install the `.ipa` via AltStore, Sideloadly, or Xcode. iPhone support is experimental — iPad is the recommended iOS target due to RAM requirements for local models.
+### iOS / iPad (Installation via AltServer)
+The iOS/iPad release is distributed as a sideloadable IPA file. Due to the RAM requirements for local models, iPad is the recommended iOS target, but it can be installed on iPhones.
+
+Here is how you can install the app using AltStore and AltServer:
+
+**Prerequisites:**
+* Ensure **AltServer** is installed and running on your Mac or Windows PC.
+* Your iOS device must be connected to the same Wi-Fi network as your computer, or connected directly via a USB cable.
+* You must have **AltStore** successfully installed on your iOS device.
+
+**Installation Steps:**
+1. **Download the IPA:** Go to the [Releases](https://github.com/orailnoor/ai_chat/releases) page on your iOS device (using Safari) and download the latest `PrivateLM-iOS.zip` package, extract it to get the `.ipa` file.
+2. **Open in AltStore:**
+   * Locate the extracted `.ipa` file in your device's "Files" app.
+   * Tap the **Share** button and select **AltStore** from the list of apps.
+   * *Alternatively*, you can open the AltStore app, go to the **My Apps** tab, tap the **"+" (plus)** icon in the top-left corner, and select the downloaded IPA file.
+3. **Install:** AltStore will begin installing the app. You may be prompted to enter your Apple ID credentials if this is your first time.
+4. **Enable Developer Mode:** On iOS 16 and later, ensure "Developer Mode" is enabled in your device's Settings (`Settings > Privacy & Security > Developer Mode`) to launch the sideloaded app.
+5. **Launch:** Once installation is finished, PrivateLM will appear in the **My Apps** tab in AltStore and on your device's home screen!
+
+*Note: Sideloaded apps via AltStore expire after 7 days, but AltStore will attempt to automatically refresh them in the background when connected to the same Wi-Fi as your computer running AltServer.*
 
 ---
 
