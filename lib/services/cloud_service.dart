@@ -3,38 +3,65 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../core/constants.dart';
 import 'hive_service.dart';
+import 'secure_storage_service.dart';
 import 'app_log_service.dart';
 
 /// Cloud API service supporting native and OpenAI-compatible providers.
 class CloudService extends GetxService {
   final HiveService _hive = Get.find<HiveService>();
+  final SecureStorageService _secure = Get.find<SecureStorageService>();
+
+  // Runtime cache: populated lazily on first API key read.
+  String? _cachedApiKey;
+  String? _cachedProvider;
 
   String get _provider =>
       _hive.getSetting(AppConstants.keyCloudProvider, defaultValue: 'openrouter') ??
       'openrouter';
 
-  String get _apiKey {
-    switch (_provider) {
-      case 'anthropic':
-        return _hive.getSetting(AppConstants.keyAnthropicKey) ?? '';
-      case 'google':
-        return _hive.getSetting(AppConstants.keyGoogleKey) ?? '';
-      case 'kimi':
-        return _hive.getSetting(AppConstants.keyKimiKey) ?? '';
-      case 'stability':
-        return _hive.getSetting(AppConstants.keyStabilityKey) ?? '';
-      case 'nvidia':
-        return _hive.getSetting(AppConstants.keyNvidiaKey) ?? '';
-      case 'openrouter':
-        return _hive.getSetting(AppConstants.keyOpenRouterKey) ?? '';
-      case 'deepseek':
-        return _hive.getSetting(AppConstants.keyDeepSeekKey) ?? '';
-      case 'custom':
-        return _hive.getSetting(AppConstants.keyCustomCloudKey) ?? '';
-      default:
-        return _hive.getSetting(AppConstants.keyOpenaiKey) ?? '';
+  Future<String> _getApiKey() async {
+    // Return cached value if still valid for the current provider.
+    final provider = _provider;
+    if (_cachedApiKey != null && _cachedProvider == provider) {
+      return _cachedApiKey!;
     }
+    String key;
+    switch (provider) {
+      case 'anthropic':
+        key = (await _secure.readApiKey(AppConstants.keyAnthropicKey)) ?? '';
+        break;
+      case 'google':
+        key = (await _secure.readApiKey(AppConstants.keyGoogleKey)) ?? '';
+        break;
+      case 'kimi':
+        key = (await _secure.readApiKey(AppConstants.keyKimiKey)) ?? '';
+        break;
+      case 'stability':
+        key = (await _secure.readApiKey(AppConstants.keyStabilityKey)) ?? '';
+        break;
+      case 'nvidia':
+        key = (await _secure.readApiKey(AppConstants.keyNvidiaKey)) ?? '';
+        break;
+      case 'openrouter':
+        key = (await _secure.readApiKey(AppConstants.keyOpenRouterKey)) ?? '';
+        break;
+      case 'deepseek':
+        key = (await _secure.readApiKey(AppConstants.keyDeepSeekKey)) ?? '';
+        break;
+      case 'custom':
+        key = (await _secure.readApiKey(AppConstants.keyCustomCloudKey)) ?? '';
+        break;
+      default:
+        key = (await _secure.readApiKey(AppConstants.keyOpenaiKey)) ?? '';
+    }
+    _cachedApiKey = key;
+    _cachedProvider = provider;
+    return key;
   }
+
+  /// Synchronous read of the cached API key. Used by individual send methods.
+  /// Call [_getApiKey] once before use to populate the cache.
+  String get _apiKey => _cachedApiKey ?? '';
 
   String get _model {
     switch (_provider) {
@@ -65,13 +92,14 @@ class CloudService extends GetxService {
     }
   }
 
-  bool get isConfigured {
+  Future<bool> get isConfigured async {
+    final apiKey = await _getApiKey();
     if (_provider == 'custom') {
       final baseUrl =
           _hive.getSetting(AppConstants.keyCustomCloudBaseUrl) ?? '';
-      return _apiKey.isNotEmpty && _model.isNotEmpty && baseUrl.isNotEmpty;
+      return apiKey.isNotEmpty && _model.isNotEmpty && baseUrl.isNotEmpty;
     }
-    return _apiKey.isNotEmpty;
+    return apiKey.isNotEmpty;
   }
 
   /// Send a message to the cloud API. Returns the response text.
@@ -84,9 +112,12 @@ class CloudService extends GetxService {
     int? maxTokens,
     void Function(String token)? onToken,
   }) async {
-    if (!isConfigured) {
+    if (!await isConfigured) {
       return 'ERROR: No API key configured for $_provider. Go to Settings.';
     }
+
+    // Warm the API key cache so _apiKey getter works in send methods.
+    await _getApiKey();
 
     try {
       if (onToken != null && _supportsStreaming) {
