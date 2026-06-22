@@ -8,12 +8,14 @@ import 'package:get/get.dart';
 import '../core/constants.dart';
 import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
+import '../services/secure_storage_service.dart';
 import '../services/inference_service.dart';
 import '../services/openai_server_service.dart';
 import '../services/tunnel_service.dart';
 
 class ServerController extends GetxController {
   final HiveService _hive = Get.find<HiveService>();
+  final SecureStorageService _secure = Get.find<SecureStorageService>();
   final InferenceService inference = Get.find<InferenceService>();
   final OpenAiServerService _server = OpenAiServerService();
   final TunnelService _tunnel = TunnelService();
@@ -49,7 +51,11 @@ class ServerController extends GetxController {
     super.onInit();
     useApiKey.value =
         _hive.getSetting<bool>(AppConstants.keyServerUseApiKey) ?? false;
-    apiKey.value = _hive.getSetting<String>(AppConstants.keyServerApiKey) ?? '';
+    // Load server API key from secure storage (async; fires and populates later)
+    _secure.readApiKey(AppConstants.keyServerApiKey).then((value) {
+      apiKey.value = value ?? '';
+      apiKeyCtrl.text = apiKey.value;
+    });
     useTunnel.value =
         _hive.getSetting<bool>(AppConstants.keyServerUseTunnel) ?? false;
     tunnelProvider.value =
@@ -174,7 +180,7 @@ class ServerController extends GetxController {
 
   Future<void> saveSettings() async {
     await _hive.setSetting(AppConstants.keyServerUseApiKey, useApiKey.value);
-    await _hive.setSetting(AppConstants.keyServerApiKey, apiKey.value.trim());
+    await _secure.writeApiKey(AppConstants.keyServerApiKey, apiKey.value.trim());
     await _hive.setSetting(AppConstants.keyServerUseTunnel, useTunnel.value);
     await _hive.setSetting(
         AppConstants.keyServerTunnelProvider, tunnelProvider.value);

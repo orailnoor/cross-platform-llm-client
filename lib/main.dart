@@ -16,6 +16,7 @@ import 'core/theme.dart';
 //////
 import 'core/routes.dart';
 import 'services/hive_service.dart';
+import 'services/secure_storage_service.dart';
 import 'services/inference_service.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
@@ -65,6 +66,8 @@ void main() {
 
     // Register global services
     await Get.putAsync(() => HiveService().init());
+    final secureStorage = await Get.putAsync(() async => SecureStorageService());
+    await secureStorage.migrateAllApiKeys();
     await Get.putAsync(() => DeviceInfoService().init());
 
     // Settings controller must be initialized before runApp for theme support
