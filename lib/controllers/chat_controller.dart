@@ -608,9 +608,13 @@ class ChatController extends GetxController {
       return;
     }
     if (webCommand != null) {
-      if (kIsWeb ||
-          hasAttachment ||
-          Get.find<LocalImageService>().isModelLoaded.value) {
+      final mode = _hive.getSetting(AppConstants.keyInferenceMode,
+              defaultValue: 'local') ??
+          'local';
+      final imageGeneration = mode == 'local'
+          ? Get.find<LocalImageService>().isModelLoaded.value
+          : _hive.getSetting(AppConstants.keyCloudProvider) == 'stability';
+      if (kIsWeb || hasAttachment || imageGeneration) {
         showToast(
             'Web search',
             kIsWeb

@@ -20,8 +20,8 @@ import 'package:privatelm/services/parallel_search_service.dart';
 
 class _Settings extends SettingsController {
   // Skip settings plugin/UI startup in the scripted inference fixture.
-  // ignore: must_call_super
   @override
+  // ignore: must_call_super
   void onInit() {}
 }
 
@@ -448,7 +448,7 @@ void main() {
   }, skip: !const bool.fromEnvironment('PARALLEL_LIVE'));
 
   test(
-      'saved cloud provider and key stay in use; web excerpts reach actual cloud request',
+      'saved cloud text provider remains active with a local image model loaded',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
@@ -474,6 +474,7 @@ void main() {
     await hive.setSetting(AppConstants.keyCustomCloudKey, 'saved-cloud-key');
     await hive.setSetting(AppConstants.keyCustomCloudModel, 'saved-model');
     settings.globalSystemPrompt.value = 'Keep my custom system instructions.';
+    Get.find<LocalImageService>().isModelLoaded.value = true;
     final controller = chat();
     await send(controller, '/search current Flutter stable version');
     final body = await observed.future;
