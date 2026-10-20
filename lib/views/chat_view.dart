@@ -179,6 +179,20 @@ class ChatView extends GetView<ChatController> {
         );
       }),
       actions: [
+        IconButton(
+          tooltip: 'Web search help',
+          icon: const Icon(Icons.travel_explore, size: 20),
+          onPressed: () => Get.dialog<void>(const AlertDialog(
+            title: Text('Web search in chat'),
+            content: Text(
+              'On Android or iOS, type /search followed by a query, or '
+              '/fetch followed by one webpage URL. You will be asked before '
+              'the query or URL is sent to Parallel. No account or API key is '
+              'needed. Your selected text model answers using the excerpts.\n\n'
+              'Ordinary messages do not use web search.',
+            ),
+          )),
+        ),
         Obx(() {
           if (controller.messages.isEmpty) return const SizedBox.shrink();
           final usage = _contextUsage();

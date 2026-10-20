@@ -17,7 +17,7 @@ _Generated on pixel 6 with 20 step_
 - **Local Inference on Android** — Download and run GGUF models directly on your phone using GPU-accelerated inference (Vulkan). No internet required after download.
 - **Cloud API Fallback** — Seamlessly switch to OpenAI, Anthropic, Google Gemini, or Kimi (Moonshot AI) when you need more power or are on unsupported platforms.
 - **Multimodal Chat** — Send text and images in conversations. Vision support works with both local models (Qwen2-VL) and cloud providers.
-- **Persistent Sessions** — All chats and settings are stored locally via Hive. Nothing leaves your device unless you explicitly choose cloud mode.
+- **Persistent Sessions** — All chats and settings are stored locally via Hive. Chat content stays on your device unless you explicitly choose cloud mode or confirm a web command below.
 - **Background Services** — Firebase Cloud Messaging integration for push updates and background task handling.
 - **Smart Auto-Configuration** — On first launch, the app detects your device's RAM and recommends optimal context size and token limits automatically.
 - **Task Management (in development)** — A task view for structured, multi-step AI workflows is being built. It is not available in the app yet.
@@ -85,6 +85,25 @@ Idle detection (5s) and hard timeouts (180s) keep the UX responsive even on unde
 - **Kimi** — OpenAI-compatible endpoint from Moonshot AI
 
 API keys are stored in Hive and never transmitted anywhere except to the provider's endpoint.
+
+### Web search in chat (Android and iOS)
+
+Use `/search latest Flutter stable release` to ask about current information, or
+`/fetch https://flutter.dev` to summarize a specific page. Each command asks for
+confirmation before sending only the query or URL to
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp).
+Search uses Fast mode, with no account or API key needed. Parallel is the built-in
+search provider; no search setup is required. Ordinary messages never call it.
+
+Your selected local or cloud text model receives a few page excerpts for that
+turn. Source URLs are included in the reply. Chat history, attachments, and model
+API keys are not sent to Parallel. Remove attachments and switch away from image
+generation before using web commands. Cancel the confirmation to keep the message
+unsent, or tap Stop to cancel a request. A failed search is reported without
+silently answering from the model alone. Free access has usage limits.
+
+Web commands require an internet connection and are currently unavailable in the
+web app. Normal local inference remains available offline.
 
 ### Cross-Platform Abstraction
 
