@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import Metal
 import UIKit
 
 /// Phone cluster on iOS: this device can be a worker (its GPU serves a
@@ -18,6 +19,8 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
         channel.setMethodCallHandler { [weak self] call, result in
             self?.handle(call, result: result)
         }
+        NSLog("[LlamaCluster] Memory for a worker: %ld MB (app limit %ld MB)",
+              Self.usableMemoryMb(), LlamaClusterWorker.availableMemoryMb())
     }
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -42,10 +45,14 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
                 "heldMb": LlamaClusterWorker.footprintMb(),
                 "ramMb": ramMb,
                 "bandwidth": bandwidth,
+                "id": Self.workerId,
             ]
             if let error = error { status["error"] = error }
             if running, let peer = LlamaClusterWorker.connectedPeer() { status["peer"] = peer }
             result(status)
+        case "setKeepScreenOn":
+            UIApplication.shared.isIdleTimerDisabled = args["on"] as? Bool ?? false
+            result(nil)
         case "localFreeRamMb":
             result(LlamaClusterWorker.availableMemoryMb())
         case "benchmark":
@@ -80,7 +87,7 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
 
         DispatchQueue.global(qos: .userInitiated).async {
             // Measure first, before the model takes memory.
-            self.ramMb = LlamaClusterWorker.availableMemoryMb()
+            self.ramMb = Self.usableMemoryMb()
             self.bandwidth = LlamaClusterWorker.memoryBandwidth(withThreads: Int32(self.performanceCores()))
             let cache = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true)[0]
                 + "/cluster_cache"
@@ -107,11 +114,33 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
             "bw": Data(String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), bandwidth).utf8),
             "model": Data(UIDevice.current.model.utf8),
             "v": Data("rpc7".utf8),
+            "id": Data(Self.workerId.utf8),
         ]
         service.setTXTRecord(NetService.data(fromTXTRecord: txt))
         service.delegate = self
         service.publish()
         self.service = service
+    }
+
+    /// What this device can hold as a worker. The increased-memory-limit
+    /// entitlement lifts iOS's per-app limit to about all of RAM (8.2 GB on
+    /// an 8 GB iPad), but the worker keeps its layers in GPU memory, so the
+    /// GPU's recommended working set (5.7 GB on an M1) is the real ceiling.
+    static func usableMemoryMb() -> Int {
+        let appLimit = LlamaClusterWorker.availableMemoryMb()
+        guard let gpu = MTLCreateSystemDefaultDevice() else { return appLimit }
+        let gpuMb = Int(gpu.recommendedMaxWorkingSetSize / (1024 * 1024))
+        return min(appLimit, gpuMb)
+    }
+
+    /// This device's lasting worker ID, so a master can find it again when
+    /// its IP address changes (another Wi-Fi network, a hotspot, DHCP).
+    static var workerId: String {
+        let key = "privatelm.cluster.workerId"
+        if let id = UserDefaults.standard.string(forKey: key) { return id }
+        let id = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(id, forKey: key)
+        return id
     }
 
     private func performanceCores() -> Int {

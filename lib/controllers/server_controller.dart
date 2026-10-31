@@ -10,6 +10,7 @@ import '../core/ui.dart';
 import '../services/app_log_service.dart';
 import '../services/hive_service.dart';
 import '../services/inference_service.dart';
+import '../services/cluster_service.dart';
 import '../services/openai_server_service.dart';
 
 class ServerController extends GetxController {
@@ -91,6 +92,9 @@ class ServerController extends GetxController {
       localUrl.value = _server.localUrl;
       isRunning.value = true;
       serverStatus.value = 'Server running';
+      if (allowNetwork.value && Get.isRegistered<ClusterService>()) {
+        Get.find<ClusterService>().serving.value = true;
+      }
     } catch (e) {
       lastError.value = '$e';
       serverStatus.value = 'Server failed';
@@ -107,6 +111,9 @@ class ServerController extends GetxController {
     isRunning.value = false;
     localUrl.value = null;
     serverStatus.value = 'Server stopped';
+    if (Get.isRegistered<ClusterService>()) {
+      Get.find<ClusterService>().serving.value = false;
+    }
   }
 
   /// Persists settings and applies the key to a running server. A required

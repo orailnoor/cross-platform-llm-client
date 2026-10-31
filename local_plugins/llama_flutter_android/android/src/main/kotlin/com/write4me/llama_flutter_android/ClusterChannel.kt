@@ -1,5 +1,6 @@
 package com.write4me.llama_flutter_android
 
+import android.app.Activity
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
@@ -14,6 +15,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -34,6 +36,9 @@ class ClusterChannel(
     private val scope: CoroutineScope,
 ) : MethodChannel.MethodCallHandler {
     private val channel = MethodChannel(messenger, "llama_flutter_android/cluster")
+
+    /** Set by the plugin while the app has an activity. */
+    var activity: Activity? = null
 
     companion object {
         private const val TAG = "ClusterChannel"
@@ -93,10 +98,21 @@ class ClusterChannel(
                     "ramMb" to status.optLong("ramMb"),
                     "bandwidth" to status.optDouble("bandwidth", 0.0),
                     "throttled" to (alive && status.optBoolean("throttled")),
+                    "id" to ClusterWorkerService.workerId(context),
                     "batteryUnrestricted" to isBatteryUnrestricted(),
                 ))
             }
             "localFreeRamMb" -> result.success(ClusterWorkerService.availableRamMb(context))
+            "setKeepScreenOn" -> {
+                // A worker is only at full speed while PrivateLM is on screen
+                // (it borrows the app's priority), so keep the screen on.
+                val on = call.argument<Boolean>("on") == true
+                activity?.runOnUiThread {
+                    if (on) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    else activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                result.success(null)
+            }
             "requestBatteryUnrestricted" -> {
                 // Android's own prompt; Samsung otherwise throttles a busy
                 // worker in the background (slow cores, low CPU share).
@@ -251,6 +267,7 @@ class ClusterChannel(
                 "ramMb" to attrs["ram"]?.toLongOrNull(),
                 "bandwidth" to attrs["bw"]?.toDoubleOrNull(),
                 "model" to attrs["model"],
+                "id" to attrs["id"],
                 "version" to attrs["v"],
             )
         }.filter { it["host"] != null }

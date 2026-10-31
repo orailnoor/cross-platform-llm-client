@@ -15,6 +15,9 @@ class ClusterWorker {
   final double? bandwidth;
   final String? model;
 
+  /// The worker device's lasting ID: finds it again when its IP changes.
+  final String? id;
+
   const ClusterWorker({
     required this.name,
     required this.host,
@@ -22,6 +25,7 @@ class ClusterWorker {
     this.ramMb,
     this.bandwidth,
     this.model,
+    this.id,
   });
 
   String get endpoint => '$host:$port';
@@ -33,7 +37,12 @@ class ClusterWorker {
         ramMb: (map['ramMb'] as num?)?.toInt(),
         bandwidth: (map['bandwidth'] as num?)?.toDouble(),
         model: map['model'] as String?,
+        id: map['id'] as String?,
       );
+
+  /// The same device at a new address.
+  ClusterWorker movedTo(String host, int port) => ClusterWorker(
+      name: name, host: host, port: port, ramMb: ramMb, bandwidth: bandwidth, model: model, id: id);
 
   Map<String, dynamic> toMap() => {
         'name': name,
@@ -42,6 +51,7 @@ class ClusterWorker {
         'ramMb': ramMb,
         'bandwidth': bandwidth,
         'model': model,
+        'id': id,
       };
 }
 
@@ -65,6 +75,9 @@ class ClusterWorkerStatus {
   /// The app is exempt from battery optimization (Android).
   final bool batteryUnrestricted;
 
+  /// This device's lasting worker ID (put in its QR code).
+  final String? id;
+
   const ClusterWorkerStatus({
     required this.state,
     this.error,
@@ -74,6 +87,7 @@ class ClusterWorkerStatus {
     this.bandwidth = 0,
     this.throttled = false,
     this.batteryUnrestricted = true,
+    this.id,
   });
 
   bool get running => state == 'running';
@@ -108,6 +122,7 @@ class LlamaCluster {
       bandwidth: (m['bandwidth'] as num?)?.toDouble() ?? 0,
       throttled: m['throttled'] as bool? ?? false,
       batteryUnrestricted: m['batteryUnrestricted'] as bool? ?? true,
+      id: m['id'] as String?,
     );
   }
 
@@ -115,6 +130,11 @@ class LlamaCluster {
   /// worker isn't moved to slow cores. No-op if already exempt.
   static Future<void> requestBatteryUnrestricted() =>
       _channel.invokeMethod('requestBatteryUnrestricted');
+
+  /// Keeps this device's screen on (a worker runs at full speed only while
+  /// PrivateLM is on screen).
+  static Future<void> setKeepScreenOn(bool on) =>
+      _channel.invokeMethod('setKeepScreenOn', {'on': on});
 
   static Future<int> localFreeRamMb() async =>
       await _channel.invokeMethod<int>('localFreeRamMb') ?? 0;

@@ -49,6 +49,21 @@ class ClusterWorkerService : Service() {
 
         fun statusFile(context: Context) = File(context.filesDir, "cluster_worker_status.json")
 
+        /**
+         * This device's lasting worker ID, so a master can find it again when
+         * its IP address changes (another Wi-Fi network, a hotspot, DHCP).
+         */
+        @Synchronized
+        fun workerId(context: Context): String {
+            // A file, not SharedPreferences: the app and the worker run in two
+            // processes and must agree on one ID.
+            val file = File(context.filesDir, "cluster_worker_id")
+            file.takeIf { it.exists() }?.readText()?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+            val id = java.util.UUID.randomUUID().toString()
+            file.writeText(id)
+            return id
+        }
+
         fun readStatus(context: Context): JSONObject =
             statusFile(context).takeIf { it.exists() }
                 ?.let { runCatching { JSONObject(it.readText()) }.getOrNull() }
@@ -165,6 +180,7 @@ class ClusterWorkerService : Service() {
             setAttribute("bw", "%.1f".format(java.util.Locale.US, bandwidth))
             setAttribute("model", Build.MODEL)
             setAttribute("v", "rpc7")
+            setAttribute("id", workerId(this@ClusterWorkerService))
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {

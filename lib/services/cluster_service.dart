@@ -75,6 +75,9 @@ class ClusterService extends GetxService {
   final worker = const ClusterWorkerStatus(state: 'stopped').obs;
   final _workerRequested = false.obs;
 
+  /// The API server is running (other devices, e.g. a PC, use the model).
+  final serving = false.obs;
+
   /// This phone's Wi-Fi address, or null when it isn't on Wi-Fi.
   final wifiAddress = RxnString();
 
@@ -113,6 +116,10 @@ class ClusterService extends GetxService {
       refreshWorkerStatus().then((_) {
         if (worker.value.running) _watchWorker();
       });
+      // A worker runs at full speed only while PrivateLM is on screen (it
+      // borrows the app's priority), so keep the screen on while sharing.
+      ever<ClusterWorkerStatus>(worker, (_) => _updateKeepScreenOn());
+      ever<bool>(serving, (_) => _updateKeepScreenOn());
       refreshWifiAddress();
     }
   }
@@ -121,6 +128,18 @@ class ClusterService extends GetxService {
   void onClose() {
     _statusTimer?.cancel();
     super.onClose();
+  }
+
+  /// Android throttles a phone whose screen is off (slow cores, low CPU
+  /// share), so keep it on while this device works for others: as a worker,
+  /// or serving the model over the network.
+  bool? _screenKeptOn;
+  void _updateKeepScreenOn() {
+    final s = worker.value;
+    final on = s.running || s.starting || serving.value;
+    if (on == _screenKeptOn) return;
+    _screenKeptOn = on;
+    LlamaCluster.setKeepScreenOn(on).catchError((_) {});
   }
 
   Future<void> setRole(ClusterRole next) async {
@@ -150,6 +169,7 @@ class ClusterService extends GetxService {
       if (deviceName.isNotEmpty) 'name': deviceName,
       if (status.ramMb > 0) 'ram': '${status.ramMb}',
       if (status.bandwidth > 0) 'bw': status.bandwidth.toStringAsFixed(1),
+      if (status.id != null) 'id': status.id!,
     }).toString();
   }
 
@@ -231,6 +251,7 @@ class ClusterService extends GetxService {
       ramMb: int.tryParse(params['ram'] ?? ''),
       bandwidth: double.tryParse(params['bw'] ?? ''),
       model: params['name'],
+      id: params['id'],
     ));
   }
 
@@ -248,6 +269,35 @@ class ClusterService extends GetxService {
   }
 
   Future<String?> addFound(ClusterWorker w) => _add(w);
+
+  /// Finds saved workers that no longer answer at their address (they moved
+  /// to another Wi-Fi, a hotspot, or got a new IP) by their device ID on
+  /// the network, and updates them. Returns the ones still unreachable.
+  Future<List<ClusterWorker>> relocateWorkers() async {
+    final missing = <ClusterWorker>[];
+    for (final w in workers) {
+      if (!await LlamaCluster.probe(w.endpoint)) missing.add(w);
+    }
+    if (missing.isEmpty) return const [];
+    final seen = await LlamaCluster.discover();
+    var moved = 0;
+    final unreachable = <ClusterWorker>[];
+    for (final w in missing) {
+      final match = seen.firstWhereOrNull((s) => w.id != null && s.id == w.id);
+      final i = workers.indexWhere((x) => x.endpoint == w.endpoint);
+      if (match == null || match.endpoint == w.endpoint || i < 0) {
+        unreachable.add(w);
+        continue;
+      }
+      workers[i] = w.movedTo(match.host, match.port);
+      moved++;
+    }
+    if (moved > 0) {
+      await _save();
+      Get.find<AppLogService>().info('Phone cluster: found $moved worker(s) at a new address');
+    }
+    return unreachable;
+  }
 
   Future<String?> _add(ClusterWorker worker) async {
     if (!await LlamaCluster.probe(worker.endpoint)) {
@@ -308,6 +358,15 @@ class ClusterService extends GetxService {
       return 0;
     }
 
+    // Workers that are off or away are left out, not fatal: the model may
+    // fit without them.
+    final offline = await relocateWorkers();
+    final available = workers.where((w) => !offline.any((o) => o.endpoint == w.endpoint)).toList();
+    if (offline.isNotEmpty) {
+      final names = offline.map((w) => w.model ?? w.name).join(', ');
+      showToast('Phone cluster', 'Not reachable, loading without: $names');
+    }
+
     final modelMb = await File(modelPath).length() / (1024 * 1024);
     final needMb = modelMb * 1.1; // + KV cache and working buffers
     _localSpeed ??= await LlamaCluster.benchmark();
@@ -316,19 +375,25 @@ class ClusterService extends GetxService {
     final master = _Phone(null, await LlamaCluster.localFreeRamMb() * 0.7, _localSpeed!);
     final phones = [
       master,
-      for (final w in workers)
+      for (final w in available)
         _Phone(w, (w.ramMb ?? 2000) * 0.75, w.bandwidth ?? _unknownSpeed),
     ];
     final totalMb = phones.fold<double>(0, (a, p) => a + p.capacityMb);
     if (needMb > totalMb) {
       throw Exception('This model (${_gb(modelMb)}) is too big for these '
           '${phones.length} phones: together they have about ${_gb(totalMb)} '
-          'free. Add another worker, close apps on the phones, or pick a '
+          'free.${offline.isEmpty ? '' : ' Not reachable: ${offline.map((w) => w.model ?? w.name).join(', ')}.'} '
+          'Add another worker, close apps on the phones, or pick a '
           'smaller model.');
     }
 
+    if (available.isEmpty) {
+      await LlamaCluster.clear();
+      return 0;
+    }
     if (needMb <= master.capacityMb) {
-      final share = await _askFitsHere(modelName ?? modelPath.split('/').last, modelMb);
+      final share = await _askFitsHere(
+          modelName ?? modelPath.split('/').last, modelMb, available.length);
       if (!share) {
         await LlamaCluster.clear();
         return 0;
@@ -393,8 +458,36 @@ class ClusterService extends GetxService {
     }
   }
 
+  /// LiteRT models can't be split across phones (the cluster is llama.cpp).
+  /// When this phone is a master with workers, asks before loading one here
+  /// alone. True to go ahead.
+  Future<bool> confirmLiteRtRunsHere(String model) async {
+    final context = Get.context;
+    if (role != ClusterRole.master || workers.isEmpty || context == null) return true;
+    final go = await showAppSheet<bool>(
+      context,
+      title: 'This model can\'t use your workers',
+      subtitle: '${model.replaceAll(RegExp(r'\.(litertlm|task)$'), '')} is a LiteRT '
+          'model, and only GGUF models can be shared across phones. It will run '
+          'on this phone only. To use your workers, load a GGUF model instead.',
+      builder: (ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PrimaryButton(
+            label: 'Load on this phone only',
+            icon: Icons.smartphone_rounded,
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+          const SizedBox(height: 10),
+          TonalButton.neutral(ctx, label: 'Cancel', onTap: () => Navigator.pop(ctx, false)),
+        ],
+      ),
+    );
+    return go == true;
+  }
+
   /// "Fits on this phone" sheet. True to share with workers anyway.
-  Future<bool> _askFitsHere(String model, double modelMb) async {
+  Future<bool> _askFitsHere(String model, double modelMb, int workerCount) async {
     final context = Get.context;
     if (context == null) return false;
     final share = await showAppSheet<bool>(
@@ -415,7 +508,7 @@ class ClusterService extends GetxService {
           const SizedBox(height: 10),
           TonalButton.neutral(
             ctx,
-            label: 'Share with ${workers.length} worker${workers.length == 1 ? '' : 's'}',
+            label: 'Share with $workerCount worker${workerCount == 1 ? '' : 's'}',
             onTap: () => Navigator.pop(ctx, true),
           ),
         ],

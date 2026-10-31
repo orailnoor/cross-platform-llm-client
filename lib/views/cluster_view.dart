@@ -27,6 +27,7 @@ class _ClusterViewState extends State<ClusterView> {
     super.initState();
     cluster.refreshWorkerStatus();
     cluster.refreshWifiAddress();
+    if (cluster.role == ClusterRole.master) cluster.relocateWorkers();
     // Pick up Wi-Fi being turned on while this screen is open.
     _wifiTimer = Timer.periodic(
         const Duration(seconds: 3), (_) => cluster.refreshWifiAddress());
@@ -181,8 +182,9 @@ class _ClusterViewState extends State<ClusterView> {
       SectionFootnote(ClusterService.workerStopsWithApp
           ? 'Keep this device plugged in, on the same Wi-Fi, with PrivateLM open: '
               'iOS pauses apps in the background. Close PrivateLM to stop sharing.'
-          : 'Keep this phone plugged in and on the same Wi-Fi. It keeps working '
-              'with the screen off. Set Phone cluster to Off to stop.'),
+          : 'Keep this phone plugged in and on the same Wi-Fi, with PrivateLM '
+              'open: the screen stays on while sharing, because Android slows '
+              'background work. Set Phone cluster to Off to stop.'),
     ];
   }
 

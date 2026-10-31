@@ -199,13 +199,14 @@ class OpenAiServerService {
     final tempFiles = <File>[];
     try {
       final body = await _readJson(request);
+      // One model is loaded at a time, and clients (PC chat apps, editors)
+      // often send their own model name: serve the loaded model regardless,
+      // as llama-server and LM Studio do.
       final model = (body['model'] as String?)?.trim();
       if (model != null &&
           model.isNotEmpty &&
           model != inference.loadedModelName.value) {
-        await _json(request, {'error': 'Model not found or not loaded'},
-            status: HttpStatus.notFound);
-        return;
+        _onLog?.call('Request for "$model"; serving ${inference.loadedModelName.value}');
       }
 
       final parsed = await _parseChatRequest(body, tempFiles);

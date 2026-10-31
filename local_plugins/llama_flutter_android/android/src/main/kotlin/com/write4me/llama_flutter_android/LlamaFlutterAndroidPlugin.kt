@@ -7,10 +7,12 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 
-class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
+class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi, ActivityAware {
     private lateinit var context: Context
     private lateinit var flutterApi: LlamaFlutterApi
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -45,6 +47,20 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             nativeFreeModel()
         }
         LlamaHostApi.setUp(binding.binaryMessenger, null)
+    }
+
+    // The cluster channel needs the window (keep the screen on while sharing).
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        clusterChannel?.activity = binding.activity
+    }
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        clusterChannel?.activity = binding.activity
+    }
+    override fun onDetachedFromActivityForConfigChanges() {
+        clusterChannel?.activity = null
+    }
+    override fun onDetachedFromActivity() {
+        clusterChannel?.activity = null
     }
 
     override fun loadModel(config: ModelConfig, callback: (Result<Unit>) -> Unit) {
@@ -118,8 +134,15 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             return
         }
 
-        isStopping.set(false)
+        val previous = generationJob
         generationJob = scope.launch {
+            // One generation at a time on the native context. A client that
+            // hangs up mid-stream (API server) leaves the previous one still
+            // stopping; starting another meanwhile crashed llama.cpp. Wait for
+            // it to return, and only then accept tokens again, so its last
+            // token or "done" can't leak into this reply.
+            previous?.let { nativeStop(); it.join() }
+            isStopping.set(false)
             try {
                 nativeGenerate(
                     request.prompt,
@@ -223,8 +246,15 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi {
             return
         }
 
-        isStopping.set(false)
+        val previous = generationJob
         generationJob = scope.launch {
+            // One generation at a time on the native context. A client that
+            // hangs up mid-stream (API server) leaves the previous one still
+            // stopping; starting another meanwhile crashed llama.cpp. Wait for
+            // it to return, and only then accept tokens again, so its last
+            // token or "done" can't leak into this reply.
+            previous?.let { nativeStop(); it.join() }
+            isStopping.set(false)
             try {
                 // Only the newest image is sent (earlier ones stay as text).
                 // Its message gets llama.cpp's media marker, which the native

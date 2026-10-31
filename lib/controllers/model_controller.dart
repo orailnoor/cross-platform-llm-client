@@ -658,6 +658,14 @@ class ModelController extends GetxController {
       );
       return;
     }
+    // The phone cluster splits GGUF models only (llama.cpp); a LiteRT model
+    // always runs on this phone, so say so instead of silently ignoring the
+    // workers.
+    if (isLiteRt &&
+        Get.isRegistered<ClusterService>() &&
+        !await Get.find<ClusterService>().confirmLiteRtRunsHere(filename)) {
+      return;
+    }
     final loadAction = await _confirmModelLoadSafety(
       filename: filename,
       path: path,

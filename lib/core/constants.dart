@@ -171,6 +171,16 @@ class AppConstants {
       'template': 'chatml',
     },
     {
+      'name': 'Gemma 4 26B-A4B Instruct (UD-IQ2_M)',
+      'filename': 'gemma-4-26b-a4b-it-ud-iq2_m.gguf',
+      'url':
+          'https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ2_M.gguf',
+      'size': '10.0 GB',
+      'description':
+          'Google Gemma 4 MoE, 4B active — too big for one phone: run it as a Phone cluster master with workers (~11 GB free across devices)',
+      'template': 'gemma',
+    },
+    {
       'name': 'Qwen2.5-3B Instruct (Q4_K_M)',
       'filename': 'qwen2.5-3b-instruct-q4_k_m.gguf',
       'url':
