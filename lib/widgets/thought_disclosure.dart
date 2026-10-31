@@ -166,7 +166,8 @@ class _ThoughtDisclosureState extends State<ThoughtDisclosure>
           // Content
           SizeTransition(
             sizeFactor: _expandAnimation,
-            alignment: AlignmentDirectional.topStart,
+            // Top-start; `alignment:` needs a newer Flutter than 3.38.
+            axisAlignment: -1.0,
             child: Container(
               margin: const EdgeInsets.only(top: 2, bottom: 6, left: 2),
               padding: const EdgeInsets.only(left: 12),

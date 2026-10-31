@@ -4,6 +4,7 @@ import 'hive_service.dart';
 import '../core/constants.dart';
 import 'device_info_service.dart';
 import 'app_log_service.dart';
+import 'cluster_service.dart';
 import 'stop_sequence_filter.dart';
 
 // Conditionally import llama_flutter_android — only on Android
@@ -130,6 +131,14 @@ class InferenceService extends GetxService {
       final deviceTier = _getDeviceTier();
       final isTensorSoC = _getIsTensorSoC();
 
+      // Phone cluster: GGUF layers spread across worker phones. This phone
+      // then runs its share on the CPU.
+      var clusterWorkers = 0;
+      if (!isLiteRt && Get.isRegistered<ClusterService>()) {
+        clusterWorkers = await Get.find<ClusterService>()
+            .applyForNextLoad(modelPath, modelName: modelName);
+      }
+
       final requestedModelName = modelName ?? modelPath.split('/').last;
       var activeModelName = requestedModelName;
       var result = await _loadModelOnEngine(
@@ -143,7 +152,7 @@ class InferenceService extends GetxService {
         clearLiteRtCache: contextChanged,
         tryLiteRtGpu: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
-        allowGgufGpu: allowGgufGpu,
+        allowGgufGpu: allowGgufGpu && clusterWorkers == 0,
         mmprojPath: mmprojPath,
       );
 
@@ -194,6 +203,11 @@ class InferenceService extends GetxService {
         await _hive.setSetting('last_loaded_context_size', finalContextSize);
       }
 
+      if (clusterWorkers > 0) {
+        final cluster = Get.find<ClusterService>();
+        await cluster.refreshSplit(modelPath);
+        return 'Model loaded across ${cluster.splitSummary ?? '${clusterWorkers + 1} phones'}.';
+      }
       return result.message;
     } catch (e) {
       isModelLoaded.value = false;
@@ -209,6 +223,9 @@ class InferenceService extends GetxService {
   Future<void> unloadModel() async {
     final engine = _engine;
     _engine = null;
+    if (Get.isRegistered<ClusterService>()) {
+      Get.find<ClusterService>().clearSplit();
+    }
     if (engine != null) {
       await stopGeneration();
       await engine.dispose();

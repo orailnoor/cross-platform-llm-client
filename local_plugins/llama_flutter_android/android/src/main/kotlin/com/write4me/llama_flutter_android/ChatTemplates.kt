@@ -499,6 +499,36 @@ class MistralTemplate : ChatTemplate {
 }
 
 /**
+ * Moonshot format (Moonlight, Kimi)
+ * Format:
+ * <|im_system|>system<|im_middle|>{system}<|im_end|>
+ * <|im_user|>user<|im_middle|>{query}<|im_end|>
+ * <|im_assistant|>assistant<|im_middle|>{response}<|im_end|>
+ *
+ * Reference: moonshotai/Moonlight-16B-A3B-Instruct tokenizer_config.json
+ */
+class MoonshotTemplate : ChatTemplate {
+    override val name = "moonshot"
+
+    override fun format(messages: List<TemplateChatMessage>): String {
+        val builder = StringBuilder()
+        if (messages.firstOrNull()?.role != "system") {
+            builder.append("<|im_system|>system<|im_middle|>You are a helpful assistant provided by Moonshot-AI.<|im_end|>")
+        }
+        for (message in messages) {
+            val tag = when (message.role) {
+                "system" -> "<|im_system|>"
+                "assistant" -> "<|im_assistant|>"
+                else -> "<|im_user|>"
+            }
+            builder.append("$tag${message.role}<|im_middle|>${message.content}<|im_end|>")
+        }
+        builder.append("<|im_assistant|>assistant<|im_middle|>")
+        return builder.toString()
+    }
+}
+
+/**
  * DeepSeek Coder v2/v3.1 format
  * Format:
  * <｜begin▁of▁sentence｜>{system} User: {user} Assistant: {assistant}<｜end▁of▁sentence｜>User: {user} Assistant:
@@ -646,6 +676,9 @@ object ChatTemplateManager {
         
         // DeepSeek Coder
         "deepseek-coder" to DeepSeekCoderTemplate(),
+
+        // Moonshot (Moonlight, Kimi)
+        "moonshot" to MoonshotTemplate(),
         
         // Other models
         "alpaca" to AlpacaTemplate(),
@@ -767,6 +800,9 @@ object ChatTemplateManager {
             lowerPath.contains("qwq") -> builtInTemplates["qwq"]!!
             lowerPath.contains("deepseek-r1") || lowerPath.contains("deepseek_r1") -> builtInTemplates["deepseek-r1"]!!
             
+            // Moonshot models (DeepSeek-V3 architecture, own chat format)
+            lowerPath.contains("moonlight") || lowerPath.contains("kimi") -> builtInTemplates["moonshot"]!!
+
             // DeepSeek variants
             lowerPath.contains("deepseek-coder") || lowerPath.contains("deepseek_coder") -> builtInTemplates["deepseek-coder"]!!
             lowerPath.contains("deepseek") && (lowerPath.contains("v3") || lowerPath.contains("v3.1")) -> builtInTemplates["deepseek-r1"]!!

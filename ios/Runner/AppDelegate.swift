@@ -4,17 +4,27 @@ import CoreML
 import StableDiffusion
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var pipeline: StableDiffusionPipeline?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-    
-    let controller = window?.rootViewController as! FlutterViewController
-    let channel = FlutterMethodChannel(name: "coreml_stable_diffusion", binaryMessenger: controller.binaryMessenger)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  // UIScene lifecycle (required by current iOS): the engine and window come
+  // from FlutterSceneDelegate, so plugins and channels are set up here
+  // instead of from window.rootViewController at launch.
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    guard let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "CoreMLStableDiffusion") else { return }
+    setUpCoreMLChannel(messenger: registrar.messenger())
+  }
+
+  private func setUpCoreMLChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "coreml_stable_diffusion", binaryMessenger: messenger)
     
     channel.setMethodCallHandler { [weak self] (call, result) in
       guard let self = self else { return }
@@ -109,8 +119,6 @@ import StableDiffusion
           result(FlutterMethodNotImplemented)
       }
     }
-    
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
 

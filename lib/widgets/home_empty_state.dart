@@ -6,6 +6,7 @@ import '../controllers/home_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../ffi/sd_ffi_bindings.dart';
+import '../services/cluster_service.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
 import '../core/haptics.dart';
@@ -298,7 +299,10 @@ class _ModelCard extends StatelessWidget {
           title = _prettyModel(inf.loadedModelName.value);
           meta = [
             'Ready',
-            inf.isGpuAccelerated.value ? 'GPU' : 'CPU',
+            Get.isRegistered<ClusterService>()
+              ? Get.find<ClusterService>().splitSummary ??
+                  (inf.isGpuAccelerated.value ? 'GPU' : 'CPU')
+              : (inf.isGpuAccelerated.value ? 'GPU' : 'CPU'),
             runtime,
           ].join(' · ');
           dot = t.green;

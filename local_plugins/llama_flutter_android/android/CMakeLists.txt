@@ -26,15 +26,21 @@ set(GGML_NATIVE OFF CACHE BOOL "Cross-compiling: never tune for the build host" 
 #    i8mm, SVE2, SME); the fastest one the phone supports is loaded.
 #  - libggml-vulkan.so: GPU backend, loaded only when the app allows it, so
 #    phones with unstable Vulkan drivers never initialise it.
+#  - libggml-rpc.so: phone cluster. A worker serves its CPU to other phones;
+#    a coordinator spreads model layers across the workers it adds.
 option(LLAMA_ANDROID_VULKAN "Build the Vulkan GPU backend" ON)
+option(LLAMA_ANDROID_RPC "Build the RPC backend (phone cluster)" ON)
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_BACKEND_DL ON CACHE BOOL "Load backends at runtime" FORCE)
     set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "Build every Arm CPU variant" FORCE)
     set(GGML_VULKAN ${LLAMA_ANDROID_VULKAN} CACHE BOOL "Enable Vulkan GPU backend" FORCE)
+    set(GGML_RPC ${LLAMA_ANDROID_RPC} CACHE BOOL "Enable RPC backend" FORCE)
+    set(GGML_RPC_RDMA OFF CACHE BOOL "No RDMA on Android" FORCE)
 else()
     # 32-bit Arm (armeabi-v7a): plain CPU build. llamafile's sgemm uses
-    # FP16 NEON intrinsics that ARMv7 lacks.
+    # FP16 NEON intrinsics that ARMv7 lacks. No cluster support either.
     set(GGML_VULKAN OFF CACHE BOOL "Enable Vulkan GPU backend" FORCE)
+    set(GGML_RPC OFF CACHE BOOL "Enable RPC backend" FORCE)
     set(GGML_LLAMAFILE OFF CACHE BOOL "No FP16 NEON on ARMv7" FORCE)
 endif()
 
@@ -141,7 +147,7 @@ add_subdirectory(src/main/cpp/llama.cpp)
 # On Android/NDK it must explicitly link libc++ or symbols such as operator new
 # and std::runtime_error stay unresolved during the native build.
 if(ANDROID)
-    foreach(target ggml-base ggml ggml-cpu ggml-vulkan llama mtmd
+    foreach(target ggml-base ggml ggml-cpu ggml-vulkan ggml-rpc llama mtmd
             ggml-cpu-android_armv8.0_1 ggml-cpu-android_armv8.2_1
             ggml-cpu-android_armv8.2_2 ggml-cpu-android_armv8.6_1
             ggml-cpu-android_armv9.0_1 ggml-cpu-android_armv9.2_1

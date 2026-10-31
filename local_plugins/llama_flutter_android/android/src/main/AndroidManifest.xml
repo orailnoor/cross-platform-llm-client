@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     
     <application>
         <service
@@ -10,6 +13,18 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="AI model inference" />
+        </service>
+        <!-- Phone cluster worker. Own process: ggml's RPC server can't be
+             stopped, so stopping the worker ends this process. -->
+        <service
+            android:name=".ClusterWorkerService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":cluster"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Shares this device's processor with the user's own local AI model running across their devices" />
         </service>
     </application>
 </manifest>

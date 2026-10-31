@@ -64,6 +64,8 @@ class AppConstants {
   static const String keyServerApiKey = 'server_api_key';
   static const String keyServerUseApiKey = 'server_use_api_key';
   static const String keyServerAllowNetwork = 'server_allow_network';
+  static const String keyClusterEnabled = 'cluster_enabled';
+  static const String keyClusterWorkers = 'cluster_workers';
   static const String keyImageSteps = 'image_steps';
   static const String keyImageGenForceCpu = 'image_gen_force_cpu';
   static const String keyImageGenBackend = 'image_gen_backend';

@@ -16,6 +16,7 @@ import 'core/theme.dart';
 import 'core/routes.dart';
 import 'services/hive_service.dart';
 import 'services/inference_service.dart';
+import 'services/cluster_service.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
 import 'services/update_service.dart';
@@ -85,6 +86,7 @@ void main() {
     final settingsController = Get.put(SettingsController());
     Get.put(CloudModelController());
 
+    if (ClusterService.isSupported) Get.put(ClusterService(), permanent: true);
     Get.put(InferenceService());
     Get.put(CloudService());
     Get.put(DownloadService());

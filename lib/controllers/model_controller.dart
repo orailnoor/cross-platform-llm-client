@@ -14,6 +14,7 @@ import '../services/device_info_service.dart';
 import '../models/ai_model.dart';
 import '../core/constants.dart';
 import '../core/ui.dart';
+import '../services/cluster_service.dart';
 import 'settings_controller.dart';
 
 enum _ModelLoadAction { cancel, unloadAndContinue, continueLoad }
@@ -847,6 +848,17 @@ class ModelController extends GetxController {
     required int fileBytes,
     required bool isLiteRt,
   }) async {
+    // Phone cluster: the model is split across phones, so this phone's free
+    // memory alone says little. ClusterService checks the whole cluster's
+    // memory (and offers this-phone-only when it fits) right before loading.
+    if (!isLiteRt &&
+        filename.toLowerCase().endsWith('.gguf') &&
+        Get.isRegistered<ClusterService>() &&
+        Get.find<ClusterService>().role == ClusterRole.master &&
+        Get.find<ClusterService>().workers.isNotEmpty) {
+      return _ModelLoadAction.continueLoad;
+    }
+
     final availableRamGb = await _refreshAvailableRamGb();
 
     // Whatever is loaded now (text or image) gets unloaded first, so count
@@ -1415,8 +1427,23 @@ class ModelController extends GetxController {
     } catch (_) {}
   }
 
+  /// Phone cluster errors (from ClusterService or the native cluster setup)
+  /// already say what to do; anything else gets the generic tips.
+  static bool _isClusterError(String rawError) {
+    final lower = rawError.toLowerCase();
+    return lower.contains('phone cluster') ||
+        lower.contains('worker') ||
+        lower.contains('cluster:') ||
+        lower.contains('too big for these');
+  }
+
   String _getFriendlyErrorMessage(String rawError) {
     final lower = rawError.toLowerCase();
+    if (_isClusterError(rawError)) {
+      // "ERROR: Failed to load model — Exception: <message>"
+      final at = rawError.lastIndexOf('Exception: ');
+      return at >= 0 ? rawError.substring(at + 'Exception: '.length) : rawError;
+    }
     if (lower.contains('unknown model architecture') ||
         lower.contains('unsupported model architecture')) {
       return 'This GGUF uses a model architecture that is not supported by the bundled llama.cpp runtime. Update the app runtime or try a GGUF exported for a supported architecture.';
@@ -1460,10 +1487,11 @@ class ModelController extends GetxController {
     }
     final showLiteRtTip = result.toLowerCase().contains('litert') ||
         filename.toLowerCase().endsWith('.litertlm');
+    final isCluster = _isClusterError(result);
     bool showDetails = false;
     showAppSheet<void>(
       context,
-      title: 'Model load failed',
+      title: isCluster ? 'Phone cluster couldn\'t load' : 'Model load failed',
       subtitle: friendlyMsg,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) {
@@ -1473,10 +1501,17 @@ class ModelController extends GetxController {
             children: [
               const SectionHeader('Troubleshooting tips',
                   padding: EdgeInsets.fromLTRB(0, 0, 0, 10)),
-              _buildTipRow(ctx, Icons.delete_outline_rounded,
-                  'Delete the model and try redownloading it completely.'),
-              _buildTipRow(ctx, Icons.memory_rounded,
-                  'Ensure your device has at least 2-3 GB of free RAM.'),
+              if (isCluster) ...[
+                _buildTipRow(ctx, Icons.hub_outlined,
+                    'On each worker, open PrivateLM > Phone cluster and check that Worker is on and shows its QR code.'),
+                _buildTipRow(ctx, Icons.wifi_rounded,
+                    'Keep every device on the same Wi-Fi. iPads must keep PrivateLM open.'),
+              ] else ...[
+                _buildTipRow(ctx, Icons.delete_outline_rounded,
+                    'Delete the model and try redownloading it completely.'),
+                _buildTipRow(ctx, Icons.memory_rounded,
+                    'Ensure your device has at least 2-3 GB of free RAM.'),
+              ],
               if (showLiteRtTip)
                 _buildTipRow(ctx, Icons.tune_rounded,
                     'Double check if this LiteRT-LM file matches your architecture.'),

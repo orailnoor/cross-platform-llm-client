@@ -18,10 +18,14 @@ public class LlamaFlutterAndroidPlugin: NSObject, FlutterPlugin, LlamaHostApi {
         qos: .userInitiated
     )
 
+    private var clusterChannel: ClusterChannel?
+
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = LlamaFlutterAndroidPlugin()
         instance.flutterApi = LlamaFlutterApi(binaryMessenger: registrar.messenger())
         LlamaHostApiSetup.setUp(binaryMessenger: registrar.messenger(), api: instance)
+        instance.clusterChannel = ClusterChannel(messenger: registrar.messenger())
+        registrar.publish(instance)  // keeps the instance (and its channel) alive
     }
 
     // MARK: - LlamaHostApiProtocol

@@ -206,6 +206,7 @@ static std::string sanitizeUTF8(const char* str, size_t len) {
     // Penalties first (applied to logits before sampling)
     if (repeatPenalty != 1.0 || frequencyPenalty != 0.0 || presencePenalty != 0.0) {
         llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
+            llama_vocab_n_tokens(g_vocab),
             repeatLastN,
             (float)repeatPenalty,
             (float)frequencyPenalty,

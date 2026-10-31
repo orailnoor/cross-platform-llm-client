@@ -2142,8 +2142,9 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
         printf("Accepted client connection\n");
         fflush(stdout);
         rpc_serve_client(backends, cache_dir, client_socket);
-        printf("Client connection closed\n");
-        fflush(stdout);
+        // PrivateLM patch: through ggml's logger, which the app reads
+        // (stdout goes nowhere on Android).
+        GGML_LOG_INFO("RPC client disconnected\n");
     }
     rpc_transport_shutdown();
     for (auto backend : backends) {

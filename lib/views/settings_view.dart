@@ -11,6 +11,8 @@ import '../services/update_service.dart';
 import '../services/device_info_service.dart';
 import '../services/device_info_native.dart' as platform_info;
 import '../ffi/sd_ffi_bindings.dart';
+import '../services/cluster_service.dart';
+import 'cluster_view.dart';
 import 'log_view.dart';
 import '../core/haptics.dart';
 
@@ -110,6 +112,20 @@ class SettingsView extends GetView<SettingsController> {
                     : 'GPU',
                 builder: (ctx) => _buildImageGenerationGroup(ctx),
               ),
+              if (Get.isRegistered<ClusterService>())
+                AppRow(
+                  icon: Icons.hub_outlined,
+                  title: 'Phone cluster',
+                  trailing: Text(
+                      switch (Get.find<ClusterService>().role) {
+                        ClusterRole.master => 'Master',
+                        ClusterRole.worker => 'Worker',
+                        ClusterRole.off => 'Off',
+                      },
+                      style: AppTokens.of(context).caption.copyWith(fontSize: 14)),
+                  chevron: true,
+                  onTap: () => Get.to(() => const ClusterView()),
+                ),
             ]),
             const SectionHeader('About'),
             AppGroup(dividerIndent: 60, children: [

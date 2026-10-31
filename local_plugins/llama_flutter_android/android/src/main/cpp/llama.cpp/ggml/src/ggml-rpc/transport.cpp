@@ -642,7 +642,20 @@ static bool set_reuse_addr(sockfd_t sockfd) {
 }
 
 socket_ptr socket_t::accept() {
+#ifndef _WIN32
+    // PrivateLM patch: log the client's address so the app can show which
+    // master a cluster worker is serving.
+    sockaddr_in peer = {};
+    socklen_t peer_len = sizeof(peer);
+    auto client_socket_fd = ::accept(pimpl->fd, (sockaddr *)&peer, &peer_len);
+    if (is_valid_fd(client_socket_fd)) {
+        char ip[INET_ADDRSTRLEN] = "?";
+        inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+        GGML_LOG_INFO("RPC client connected: %s\n", ip);
+    }
+#else
     auto client_socket_fd = ::accept(pimpl->fd, NULL, NULL);
+#endif
     if (!is_valid_fd(client_socket_fd)) {
         return nullptr;
     }
@@ -650,6 +663,12 @@ socket_ptr socket_t::accept() {
         GGML_LOG_ERROR("Failed to set TCP_NODELAY\n");
         return nullptr;
     }
+#if defined(__APPLE__) && defined(SO_NET_SERVICE_TYPE)
+    // PrivateLM patch: interactive-voice class, so an iPad/iPhone worker's
+    // Wi-Fi doesn't doze between tokens (100-300 ms delays otherwise).
+    int service = NET_SERVICE_TYPE_VO;
+    setsockopt(client_socket_fd, SOL_SOCKET, SO_NET_SERVICE_TYPE, &service, sizeof(service));
+#endif
     return socket_ptr(new socket_t(std::make_unique<impl>(client_socket_fd)));
 }
 

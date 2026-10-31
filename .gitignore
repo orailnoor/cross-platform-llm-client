@@ -87,3 +87,7 @@ local_plugins/**/ios/sd_cpp_src/
 local_plugins/**/android/.cxx/
 local_plugins/**/android/build/
 reference_local_diffusion/
+
+# Prebuilt llama.cpp for iOS (scripts/build_llama_ios.sh)
+local_plugins/llama_flutter_android/ios/llama_ios/*
+!local_plugins/llama_flutter_android/ios/llama_ios/README.md

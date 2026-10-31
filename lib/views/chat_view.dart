@@ -10,6 +10,7 @@ import '../controllers/chat_controller.dart';
 import '../controllers/settings_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/home_controller.dart';
+import '../services/cluster_service.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
 import '../ffi/sd_ffi_bindings.dart';
@@ -253,7 +254,10 @@ class ChatView extends GetView<ChatController> {
         name: pretty(inf.loadedModelName.value),
         meta: [
           'Ready',
-          inf.isGpuAccelerated.value ? 'GPU' : 'CPU',
+          Get.isRegistered<ClusterService>()
+              ? Get.find<ClusterService>().splitSummary ??
+                  (inf.isGpuAccelerated.value ? 'GPU' : 'CPU')
+              : (inf.isGpuAccelerated.value ? 'GPU' : 'CPU'),
           inf.loadedModelRuntime.value == 'litert' ? 'LiteRT' : 'GGUF',
         ].join(' · '),
         dot: green,

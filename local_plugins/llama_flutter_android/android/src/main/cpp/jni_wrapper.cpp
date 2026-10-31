@@ -3,14 +3,26 @@
 #include <vector>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <ctime>
+#include <thread>
 #include <cstring>
 #include <fstream>
 #include <mutex>
 #include <android/log.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <dlfcn.h>
+#include <setjmp.h>
+#include <signal.h>
 #include "llama.cpp/include/llama.h"
 #include "llama.cpp/ggml/include/ggml-backend.h"
+#include "llama.cpp/ggml/include/gguf.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
 #define LOG_TAG "LlamaJNI"
@@ -35,6 +47,12 @@ static bool g_cache_reusable = true;
 static std::mutex g_load_log_mutex;
 static std::string g_load_error;
 static bool g_capture_load_error = false;
+// "<buffer name>\t<MiB>" per weight buffer of the last model load, from
+// llama.cpp's "model buffer size" lines. Cluster workers' buffers are named
+// "RPC<n>[host:port]"; everything else is on this phone.
+static std::string g_load_buffers;
+// Cluster worker: address of the master currently connected, empty if none.
+static std::string g_worker_peer;
 
 // ---------------------------------------------------------------------------
 // Runtime backend loading (GGML_BACKEND_DL)
@@ -52,6 +70,7 @@ static std::mutex g_backend_mutex;
 static std::string g_lib_dir;
 static bool g_cpu_backend_loaded = false;
 static bool g_gpu_backend_loaded = false;
+static bool g_rpc_backend_loaded = false;
 
 #ifdef LLAMA_JNI_BACKEND_DL
 // Best first. The armv9 (SVE2/SME) variants are deliberately excluded: on a
@@ -61,6 +80,53 @@ static const char* const kCpuVariants[] = {
     "android_armv8.6_1", "android_armv8.2_2", "android_armv8.2_1",
     "android_armv8.0_1",
 };
+
+// Some kernels don't report CPU features the cores have. The Poco F1's
+// LineageOS 4.9 kernel leaves dot-product (asimddp) and FP16 (asimdhp) out of
+// HWCAP, so ggml picks the plain armv8.0 build, several times slower at
+// quantized matmuls. Instead of trusting HWCAP, run one instruction of each
+// kind and catch SIGILL if the core can't.
+static sigjmp_buf g_probe_jmp;
+static void probeSigill(int) { siglongjmp(g_probe_jmp, 1); }
+
+static bool cpuRuns(void (*probe)()) {
+    struct sigaction ill = {}, old = {};
+    ill.sa_handler = probeSigill;
+    sigemptyset(&ill.sa_mask);
+    sigaction(SIGILL, &ill, &old);
+    bool ok = false;
+    if (sigsetjmp(g_probe_jmp, 1) == 0) {
+        probe();
+        ok = true;
+    }
+    sigaction(SIGILL, &old, nullptr);
+    return ok;
+}
+
+#if defined(__aarch64__)
+// Raw encodings, so the assembler needs no +dotprod/+fp16 flags.
+static void probeDotprod() { asm volatile(".inst 0x4e829420" ::: "v0"); }  // sdot v0.4s, v1.16b, v2.16b
+static void probeFp16() { asm volatile(".inst 0x4e421420" ::: "v0"); }     // fadd v0.8h, v1.8h, v2.8h
+#else
+static void probeDotprod() {}
+static void probeFp16() {}
+#endif
+
+/// Loads a CPU variant without ggml's HWCAP-based score check (which
+/// load_backend enforces). Only for features probed above.
+static bool loadCpuVariantUnchecked(const std::string& path) {
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) return false;
+    using init_fn = ggml_backend_reg_t (*)();
+    auto init = reinterpret_cast<init_fn>(dlsym(handle, "ggml_backend_init"));
+    ggml_backend_reg_t reg = init ? init() : nullptr;
+    if (!reg) {
+        dlclose(handle);
+        return false;
+    }
+    ggml_backend_register(reg);  // the library stays loaded for the app's life
+    return true;
+}
 
 static void loadCpuBackendLocked() {
     if (g_cpu_backend_loaded) return;
@@ -79,6 +145,15 @@ static void loadCpuBackendLocked() {
             best_score = value;
             best_path = path;
             best_name = variant;
+        }
+    }
+    if (best_name == "android_armv8.0_1" && cpuRuns(probeDotprod)) {
+        const char* variant = cpuRuns(probeFp16) ? "android_armv8.2_2" : "android_armv8.2_1";
+        const std::string path = g_lib_dir + "/libggml-cpu-" + variant + ".so";
+        if (loadCpuVariantUnchecked(path)) {
+            g_cpu_backend_loaded = true;
+            LOGI("CPU backend: %s (kernel hides these features; probed them instead)", variant);
+            return;
         }
     }
     if (!best_path.empty() && ggml_backend_load(best_path.c_str())) {
@@ -100,9 +175,24 @@ static bool loadGpuBackendLocked() {
     }
     return g_gpu_backend_loaded;
 }
+
+/// The RPC backend registry (phone cluster), loading it on first use.
+static ggml_backend_reg_t loadRpcBackendLocked() {
+    if (!g_rpc_backend_loaded) {
+        const std::string path = g_lib_dir + "/libggml-rpc.so";
+        if (!ggml_backend_load(path.c_str())) {
+            LOGE("RPC backend unavailable (%s)", path.c_str());
+            return nullptr;
+        }
+        g_rpc_backend_loaded = true;
+        LOGI("RPC backend loaded");
+    }
+    return ggml_backend_reg_by_name("RPC");
+}
 #else
 static void loadCpuBackendLocked() { g_cpu_backend_loaded = true; }
 static bool loadGpuBackendLocked() { return false; }
+static ggml_backend_reg_t loadRpcBackendLocked() { return nullptr; }
 #endif
 
 static void ensureCpuBackend() {
@@ -110,17 +200,287 @@ static void ensureCpuBackend() {
     loadCpuBackendLocked();
 }
 
-/// First GPU device registered by a loaded backend, or nullptr.
+/// Cluster workers show up as GPU devices named "RPC<n>"; they must never be
+/// mistaken for this phone's own GPU.
+static bool isRpcDevice(ggml_backend_dev_t dev) {
+    const char* name = ggml_backend_dev_name(dev);
+    return name && std::strncmp(name, "RPC", 3) == 0;
+}
+
+/// First local GPU device registered by a loaded backend, or nullptr.
 static ggml_backend_dev_t firstGpuDevice() {
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
         const auto type = ggml_backend_dev_type(dev);
-        if (type == GGML_BACKEND_DEVICE_TYPE_GPU ||
-            type == GGML_BACKEND_DEVICE_TYPE_IGPU) {
+        if ((type == GGML_BACKEND_DEVICE_TYPE_GPU ||
+             type == GGML_BACKEND_DEVICE_TYPE_IGPU) && !isRpcDevice(dev)) {
             return dev;
         }
     }
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Phone cluster (RPC backend)
+//
+// A worker phone serves its CPU over ggml's RPC protocol. The coordinator adds
+// each worker as a remote device and offloads the model's last layers to them;
+// workers only ever see tensors, never the prompt text. The cluster set here
+// applies to the next nativeLoadModel call.
+// ---------------------------------------------------------------------------
+static std::vector<std::string> g_cluster_endpoints;
+static std::vector<float> g_cluster_weights;  // one per endpoint
+static float g_cluster_local_weight = 0.0f;
+static std::vector<std::string> g_registered_endpoints;
+
+static std::string jstringToStd(JNIEnv* env, jstring value) {
+    if (!value) return {};
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (!chars) return {};
+    std::string out(chars);
+    env->ReleaseStringUTFChars(value, chars);
+    return out;
+}
+
+/// The model's transformer block count from its GGUF header, or -1.
+static int readBlockCount(const char* model_path) {
+    gguf_init_params params = {/* .no_alloc = */ true, /* .ctx = */ nullptr};
+    gguf_context* gguf = gguf_init_from_file(model_path, params);
+    if (!gguf) return -1;
+    int count = -1;
+    const int64_t arch_id = gguf_find_key(gguf, "general.architecture");
+    if (arch_id >= 0) {
+        const std::string key = std::string(gguf_get_val_str(gguf, arch_id)) + ".block_count";
+        const int64_t id = gguf_find_key(gguf, key.c_str());
+        if (id >= 0) {
+            switch (gguf_get_kv_type(gguf, id)) {
+                case GGUF_TYPE_UINT32: count = (int)gguf_get_val_u32(gguf, id); break;
+                case GGUF_TYPE_INT32:  count = gguf_get_val_i32(gguf, id); break;
+                default: break;
+            }
+        }
+    }
+    gguf_free(gguf);
+    return count;
+}
+
+struct ClusterPlan {
+    std::vector<ggml_backend_dev_t> devices;  // null-terminated
+    std::vector<float> split;                 // llama_max_devices() entries
+    int n_gpu_layers = 0;
+    llama_model_tensor_buft_override overrides[2] = {};
+};
+
+/// Connects to every configured worker and decides which layers go where:
+/// this phone keeps the first layers (by its weight), workers get the rest
+/// split by theirs. Returns an error message, or empty on success.
+static std::string planCluster(const char* model_path, ClusterPlan& plan) {
+    std::vector<std::string> endpoints;
+    std::vector<float> weights;
+    float local_weight;
+    ggml_backend_reg_t rpc;
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mutex);
+        endpoints = g_cluster_endpoints;
+        weights = g_cluster_weights;
+        local_weight = g_cluster_local_weight;
+        rpc = loadRpcBackendLocked();
+    }
+    if (!rpc) return "This build has no cluster (RPC) support";
+    using add_server_fn = ggml_backend_reg_t (*)(const char*);
+    auto add_server = reinterpret_cast<add_server_fn>(
+        ggml_backend_reg_get_proc_address(rpc, "ggml_backend_rpc_add_server"));
+    if (!add_server) return "RPC backend is missing ggml_backend_rpc_add_server";
+
+    const int n_layer = readBlockCount(model_path);
+    if (n_layer <= 0) return "Could not read the model's layer count";
+
+    float remote_weight = 0.0f;
+    std::vector<float> device_weights;
+    for (size_t i = 0; i < endpoints.size(); i++) {
+        // Aborts the process if the worker can't be reached, so the app
+        // probes each worker over TCP before calling setCluster.
+        ggml_backend_reg_t reg = add_server(endpoints[i].c_str());
+        if (!reg) return "Worker " + endpoints[i] + " reported no devices";
+        if (std::find(g_registered_endpoints.begin(), g_registered_endpoints.end(),
+                      endpoints[i]) == g_registered_endpoints.end()) {
+            ggml_backend_register(reg);
+            g_registered_endpoints.push_back(endpoints[i]);
+        }
+        const size_t n_dev = ggml_backend_reg_dev_count(reg);
+        for (size_t d = 0; d < n_dev; d++) {
+            plan.devices.push_back(ggml_backend_reg_dev_get(reg, d));
+            device_weights.push_back(std::max(weights[i], 0.01f) / n_dev);
+        }
+        remote_weight += std::max(weights[i], 0.01f);
+    }
+    if (plan.devices.empty()) return "No cluster workers";
+    plan.devices.push_back(nullptr);
+
+    plan.split.assign(llama_max_devices(), 0.0f);
+    for (size_t d = 0; d < device_weights.size() && d < plan.split.size(); d++) {
+        plan.split[d] = device_weights[d];
+    }
+
+    // llama.cpp offloads the *last* n_gpu_layers blocks (+1 for the output
+    // layer), so keeping `local` blocks here means offloading the rest.
+    const float total = std::max(local_weight, 0.0f) + remote_weight;
+    int local = (int)std::lround(n_layer * std::max(local_weight, 0.0f) / total);
+    local = std::clamp(local, 0, n_layer);
+    plan.n_gpu_layers = n_layer + 1 - local;
+
+    // The output layer goes with the last offloaded layer, i.e. a worker.
+    // It's the biggest single matmul per token (vocab x hidden) and its
+    // result, a score per vocab entry (~600 KB), would cross Wi-Fi on every
+    // token. Keep its weights here instead (tied models reuse token_embd).
+    ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    if (cpu) {
+        plan.overrides[0] = {"^(output|token_embd)\\.weight$", ggml_backend_dev_buffer_type(cpu)};
+        plan.overrides[1] = {nullptr, nullptr};
+    }
+    LOGI("Cluster: %d of %d layers local, rest on %zu worker device(s), output layer local",
+         local, n_layer, device_weights.size());
+    return {};
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeSetCluster(
+        JNIEnv* env, jobject /* this */, jobjectArray endpoints, jfloatArray weights,
+        jfloat local_weight) {
+    std::lock_guard<std::mutex> lock(g_backend_mutex);
+    g_cluster_endpoints.clear();
+    g_cluster_weights.clear();
+    g_cluster_local_weight = local_weight;
+    const jsize n = endpoints ? env->GetArrayLength(endpoints) : 0;
+    const jsize n_weights = weights ? env->GetArrayLength(weights) : 0;
+    std::vector<jfloat> w(n_weights);
+    if (n_weights > 0) env->GetFloatArrayRegion(weights, 0, n_weights, w.data());
+    for (jsize i = 0; i < n; i++) {
+        auto item = static_cast<jstring>(env->GetObjectArrayElement(endpoints, i));
+        g_cluster_endpoints.push_back(jstringToStd(env, item));
+        g_cluster_weights.push_back(i < n_weights ? w[i] : 1.0f);
+        env->DeleteLocalRef(item);
+    }
+    LOGI("Cluster set: %zu worker(s)", g_cluster_endpoints.size());
+}
+
+/// Where the last model load put its weights: "<buffer name>\t<MiB>" lines.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeLastLoadBuffers(
+        JNIEnv* env, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    return env->NewStringUTF(g_load_buffers.c_str());
+}
+
+/// Cluster worker: the connected master's address, or null.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeWorkerPeer(
+        JNIEnv* env, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    return g_worker_peer.empty() ? nullptr : env->NewStringUTF(g_worker_peer.c_str());
+}
+
+/// Memory read speed in GB/s with `threads` threads. Token generation is
+/// limited by how fast weights stream from RAM, so this ranks phones for the
+/// cluster better than core counts or clock speeds do. Takes ~0.2 s.
+extern "C" JNIEXPORT jdouble JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeMemBandwidth(
+        JNIEnv* /* env */, jobject /* this */, jint threads) {
+    const int n = std::max(1, (int)threads);
+    const size_t per_thread = (64u << 20) / sizeof(uint64_t) / n;  // 64 MB total
+    std::vector<uint64_t> data(per_thread * n, 1);
+    std::vector<uint64_t> sums(n, 0);
+    const int passes = 4;
+    auto run = [&](int t) {
+        const uint64_t* p = data.data() + per_thread * t;
+        uint64_t a = 0, b = 0, c = 0, d = 0;
+        for (int pass = 0; pass < passes; pass++) {
+            for (size_t i = 0; i + 4 <= per_thread; i += 4) {
+                a += p[i]; b += p[i + 1]; c += p[i + 2]; d += p[i + 3];
+            }
+        }
+        sums[t] = a + b + c + d;
+    };
+    run(0);  // warm up: page in the buffer
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<std::thread> pool;
+    for (int t = 0; t < n; t++) pool.emplace_back(run, t);
+    for (auto& th : pool) th.join();
+    const double secs = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    const double bytes = (double)data.size() * sizeof(uint64_t) * passes;
+    LOGI("Memory bandwidth: %.1f GB/s (%d threads, check %llu)", bytes / secs / 1e9, n,
+         (unsigned long long)sums[0]);
+    return secs > 0 ? bytes / secs / 1e9 : 0.0;
+}
+
+// Keeps this device's Wi-Fi radio awake while a master is connected. Phones
+// and iPads doze the radio between packets (tens to 200+ ms to wake), and
+// every token makes a few round trips to each worker. A device that is
+// transmitting stays out of power save, so send the master one tiny UDP
+// datagram (discard port 9) every 20 ms: ~50 bytes/s. Measured iPad latency
+// from the master: 28 ms average with 111 ms spikes when idle.
+static void runRadioKeepAwake(const std::atomic<bool>& running, std::string (*peer)()) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return;
+    const char byte = 0;
+    while (running) {
+        const std::string ip = peer();
+        if (ip.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+        sockaddr_in to = {};
+        to.sin_family = AF_INET;
+        to.sin_port = htons(9);
+        if (inet_pton(AF_INET, ip.c_str(), &to.sin_addr) == 1) {
+            sendto(fd, &byte, 1, 0, (const sockaddr*)&to, sizeof(to));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    close(fd);
+}
+
+static std::atomic<bool> g_worker_running{false};
+
+static std::string currentWorkerPeer() {
+    std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    return g_worker_peer;
+}
+
+/// Runs this phone as a cluster worker. Blocks for as long as the server
+/// runs (ggml has no way to stop it), so it lives in its own process; only
+/// returns, with the reason, if the server couldn't start.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeServe(
+        JNIEnv* env, jobject /* this */, jstring lib_dir, jstring endpoint,
+        jstring cache_dir, jlong n_threads) {
+    ggml_backend_reg_t rpc;
+    ggml_backend_dev_t cpu;
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mutex);
+        if (g_lib_dir.empty()) g_lib_dir = jstringToStd(env, lib_dir);
+        llama_log_set(androidLlamaLog, nullptr);
+        loadCpuBackendLocked();
+        rpc = loadRpcBackendLocked();
+        cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    }
+    if (!rpc) return env->NewStringUTF("This build has no cluster (RPC) support");
+    if (!cpu) return env->NewStringUTF("No CPU backend could be loaded");
+    using start_fn = void (*)(const char*, const char*, size_t, size_t, ggml_backend_dev_t*);
+    auto start = reinterpret_cast<start_fn>(
+        ggml_backend_reg_get_proc_address(rpc, "ggml_backend_rpc_start_server"));
+    if (!start) return env->NewStringUTF("RPC backend is missing its server");
+
+    const std::string ep = jstringToStd(env, endpoint);
+    const std::string cache = jstringToStd(env, cache_dir);
+    LOGI("Cluster worker listening on %s (cache %s)", ep.c_str(), cache.c_str());
+    g_worker_running = true;
+    std::thread([] { runRadioKeepAwake(g_worker_running, currentWorkerPeer); }).detach();
+    start(ep.c_str(), cache.empty() ? nullptr : cache.c_str(),
+          (size_t)std::max<jlong>(1, n_threads), 1, &cpu);
+    g_worker_running = false;
+    return env->NewStringUTF("Worker stopped: the port may already be in use");
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -160,6 +520,24 @@ static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
     __android_log_write(priority, LOG_TAG, text);
 
     std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    if (const char* at = std::strstr(text, " model buffer size = ")) {
+        // "load_tensors: <name> model buffer size = <MiB> MiB"
+        const char* colon = std::strchr(text, ':');
+        const char* start = colon && colon < at ? colon + 1 : text;
+        while (start < at && *start == ' ') start++;
+        const double mib = std::strtod(at + std::strlen(" model buffer size = "), nullptr);
+        g_load_buffers.append(start, at - start).append("\t")
+            .append(std::to_string(mib)).append("\n");
+    }
+    static const char kConnected[] = "RPC client connected: ";
+    if (std::strncmp(text, kConnected, sizeof(kConnected) - 1) == 0) {
+        g_worker_peer.assign(text + sizeof(kConnected) - 1);
+        while (!g_worker_peer.empty() && std::isspace((unsigned char)g_worker_peer.back())) {
+            g_worker_peer.pop_back();
+        }
+    } else if (std::strncmp(text, "RPC client disconnected", 23) == 0) {
+        g_worker_peer.clear();
+    }
     if (!g_capture_load_error) return;
     if (level == GGML_LOG_LEVEL_ERROR) {
         g_load_error.assign(text);
@@ -396,17 +774,45 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     // With no GPU layers requested, give llama.cpp an empty device list so
     // it can't touch a GPU at all (even if the Vulkan backend is loaded).
     static ggml_backend_dev_t no_gpu_devices[] = {nullptr};
+    // Otherwise name the local GPU explicitly: once cluster workers are
+    // registered, llama.cpp's default device list would include them too.
+    ggml_backend_dev_t local_gpu_devices[] = {firstGpuDevice(), nullptr};
     if (n_gpu_layers == 0) {
         model_params.devices = no_gpu_devices;
+    } else {
+        model_params.devices = local_gpu_devices;
+    }
+
+    // Cluster mode: this phone runs on its CPU and the workers hold the rest.
+    ClusterPlan cluster;
+    bool has_cluster;
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mutex);
+        has_cluster = !g_cluster_endpoints.empty();
+    }
+    if (has_cluster) {
+        const std::string error = planCluster(model_path, cluster);
+        if (!error.empty()) {
+            env->ReleaseStringUTFChars(path, model_path);
+            throwLoadError(env, "Cluster: " + error);
+            return;
+        }
+        model_params.devices = cluster.devices.data();
+        model_params.tensor_split = cluster.split.data();
+        model_params.n_gpu_layers = cluster.n_gpu_layers;
+        if (cluster.overrides[0].pattern) {
+            model_params.tensor_buft_overrides = cluster.overrides;
+        }
     }
 
     llama_log_set(androidLlamaLog, nullptr);
     {
         std::lock_guard<std::mutex> lock(g_load_log_mutex);
         g_load_error.clear();
+        g_load_buffers.clear();
         g_capture_load_error = true;
     }
-    
+
     // Load model
     g_model = llama_model_load_from_file(model_path, model_params);
     env->ReleaseStringUTFChars(path, model_path);
@@ -429,8 +835,9 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     
     // Memory optimization: reduce memory usage by limiting batch processing
     ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
-    // Don't push CPU-resident tensor ops to the GPU in CPU-only mode.
-    ctx_params.op_offload = n_gpu_layers != 0;
+    // Don't push CPU-resident tensor ops to the GPU in CPU-only mode, nor
+    // over Wi-Fi to a worker in cluster mode.
+    ctx_params.op_offload = n_gpu_layers != 0 && !has_cluster;
 
     // Create context (using new API)
     g_ctx = llama_init_from_model(g_model, ctx_params);
