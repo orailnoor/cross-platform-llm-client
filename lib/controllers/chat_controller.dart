@@ -25,6 +25,7 @@ import '../services/local_image_service.dart';
 import '../services/app_log_service.dart';
 import '../services/image_generation_notification_service.dart';
 import '../services/document_extractor_service.dart';
+import '../services/parallel_search_service.dart';
 import '../utils/thought_parser.dart';
 
 const int _visionImageMaxSide = 768;
@@ -53,6 +54,31 @@ Uint8List? _resizeVisionImageBytes(Map<String, dynamic> args) {
 }
 
 class ChatController extends GetxController {
+  final Future<bool> Function(WebSearchCommand) _confirmWebRequest;
+
+  ChatController({Future<bool> Function(WebSearchCommand)? confirmWebRequest})
+      : _confirmWebRequest = confirmWebRequest ?? _askWebSearchConsent;
+
+  static Future<bool> _askWebSearchConsent(WebSearchCommand command) async =>
+      await Get.dialog<bool>(AlertDialog(
+        title: const Text('Use Parallel web search?'),
+        content: Text(
+          'Send this ${command.tool == 'web_fetch' ? 'URL' : 'query'} to Parallel? '
+          'Your chat history and attachments are not sent to Parallel. '
+          'The excerpts are given to your selected local or cloud model.\n\n'
+          '${command.input}',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Get.back(result: false),
+              child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Get.back(result: true),
+              child: const Text('Continue')),
+        ],
+      )) ??
+      false;
+
   final HiveService _hive = Get.find<HiveService>();
   final _uuid = const Uuid();
 
@@ -162,6 +188,7 @@ class ChatController extends GetxController {
 
   @override
   void onClose() {
+    stopGenerating();
     _scrollTimer?.cancel();
     if (_scrollListenerAttached) {
       scrollController.removeListener(_handleUserScroll);
@@ -573,6 +600,30 @@ class ChatController extends GetxController {
     final hasAttachment =
         selectedImagePath.value != null || selectedFileName.value != null;
     if (text.isEmpty && !hasAttachment) return;
+    WebSearchCommand? webCommand;
+    try {
+      webCommand = WebSearchCommand.parse(text);
+    } on FormatException catch (e) {
+      showToast('Web search', e.message, tone: ToastTone.error);
+      return;
+    }
+    if (webCommand != null) {
+      final mode = _hive.getSetting(AppConstants.keyInferenceMode,
+              defaultValue: 'local') ??
+          'local';
+      final imageGeneration = mode == 'local'
+          ? Get.find<LocalImageService>().isModelLoaded.value
+          : _hive.getSetting(AppConstants.keyCloudProvider) == 'stability';
+      if (kIsWeb || hasAttachment || imageGeneration) {
+        showToast(
+            'Web search',
+            kIsWeb
+                ? 'Web commands are available on Android and iOS.'
+                : 'Use web commands in a text chat without attachments.',
+            tone: ToastTone.error);
+        return;
+      }
+    }
     final fileName = selectedFileName.value;
     final fileContent = selectedFileContent.value;
     final filePath = selectedFilePath.value;
@@ -595,6 +646,16 @@ class ChatController extends GetxController {
     // double tap can't pass the guard above twice and send duplicates.
     // Done after createNewChat(), which stops any in-flight generation.
     isLoading.value = true;
+
+    if (webCommand != null) {
+      final preparationId = _generationSerial;
+      final allowed = await _confirmWebRequest(webCommand);
+      if (preparationId != _generationSerial) return;
+      if (!allowed) {
+        isLoading.value = false;
+        return;
+      }
+    }
 
     // Encode image to base64 if it's not already pre-encoded, so the message
     // saved in history contains the image bytes and is 100% stable.
@@ -689,6 +750,23 @@ class ChatController extends GetxController {
                     : m.content,
               })
           .toList();
+
+      WebSearchEvidence? webEvidence;
+      var modelPrompt = effectiveText;
+      if (webCommand != null) {
+        // ChatSession.id is a persisted random UUID. Capture it before await;
+        // switching chats cancels the operation and cannot change its identity.
+        final conversationId = currentSessionId.value;
+        webEvidence = await Get.find<ParallelSearchService>().execute(
+          webCommand,
+          conversationId: conversationId,
+        );
+        if (generationId != _generationSerial) return;
+        modelPrompt = webEvidence.prompt(webCommand.tool == 'web_fetch'
+            ? 'Summarize this webpage: ${webCommand.input}'
+            : webCommand.input);
+        history.last = {'role': 'user', 'content': modelPrompt};
+      }
 
       if (inferenceMode == 'local') {
         final localImage = Get.find<LocalImageService>();
@@ -788,7 +866,7 @@ class ChatController extends GetxController {
           // returns a clear unsupported message from the inference layer.
 
           rawResponse = await inference.generate(
-            prompt: effectiveText,
+            prompt: modelPrompt,
             systemPrompt: _effectiveSystemPrompt,
             conversationHistory: history,
             source: 'chat',
@@ -821,6 +899,10 @@ class ChatController extends GetxController {
             _scrollToBottom();
           },
         );
+      }
+
+      if (webEvidence != null && !rawResponse.startsWith('ERROR:')) {
+        rawResponse += webEvidence.sourceLinks;
       }
 
       if (thoughtStartedAt != null && thoughtDurationSeconds == null) {
@@ -930,6 +1012,7 @@ class ChatController extends GetxController {
     unawaited(Get.find<InferenceService>().stopGeneration());
     Get.find<LocalImageService>().cancelGeneration();
     Get.find<CloudService>().cancel();
+    Get.find<ParallelSearchService>().cancel();
   }
 
   void _saveAssistantMessage({

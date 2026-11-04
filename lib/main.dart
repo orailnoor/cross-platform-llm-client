@@ -18,6 +18,7 @@ import 'services/hive_service.dart';
 import 'services/inference_service.dart';
 import 'services/cluster_service.dart';
 import 'services/cloud_service.dart';
+import 'services/parallel_search_service.dart';
 import 'services/download_service.dart';
 import 'services/update_service.dart';
 import 'services/device_info_service.dart';
@@ -89,6 +90,7 @@ void main() {
     if (ClusterService.isSupported) Get.put(ClusterService(), permanent: true);
     Get.put(InferenceService());
     Get.put(CloudService());
+    Get.put(ParallelSearchService());
     Get.put(DownloadService());
     if (UpdateService.isSupported) Get.put(UpdateService(), permanent: true);
     Get.put(LocalImageService());
