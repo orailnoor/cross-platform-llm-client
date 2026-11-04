@@ -373,9 +373,6 @@ class OpenAiServerService {
       if (contentResult.error != null) {
         return _ParsedChatRequest.error(contentResult.error!);
       }
-      imagePath ??= contentResult.imagePath;
-      audioPath ??= contentResult.audioPath;
-
       if (role == 'system') {
         if (contentResult.text.trim().isNotEmpty) {
           systemParts.add(contentResult.text.trim());
@@ -384,6 +381,9 @@ class OpenAiServerService {
       }
       if (i == rawMessages.length - 1 && role == 'user') {
         lastUserText = contentResult.text.trim();
+        // The engine accepts attachments for the current turn, not history.
+        imagePath = contentResult.imagePath;
+        audioPath = contentResult.audioPath;
       } else {
         history.add({'role': role, 'content': contentResult.text});
       }

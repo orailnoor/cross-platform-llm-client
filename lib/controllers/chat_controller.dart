@@ -594,6 +594,7 @@ class ChatController extends GetxController {
     // Mark busy before the first await (reading an attached image), so a
     // double tap can't pass the guard above twice and send duplicates.
     // Done after createNewChat(), which stops any in-flight generation.
+    final generationId = ++_generationSerial;
     isLoading.value = true;
 
     // Encode image to base64 if it's not already pre-encoded, so the message
@@ -604,6 +605,8 @@ class ChatController extends GetxController {
         imgBase64 = base64Encode(await File(imagePath).readAsBytes());
       } catch (_) {}
     }
+    // A stop, chat switch, or deletion during the read cancels the whole send.
+    if (generationId != _generationSerial) return;
 
     // Add user message
     final userMsg = ChatMessage(
@@ -644,7 +647,6 @@ class ChatController extends GetxController {
     }
 
     // Start generating
-    final generationId = ++_generationSerial;
     isLoading.value = true;
     isStreaming.value = true;
     streamingAttachmentType.value =

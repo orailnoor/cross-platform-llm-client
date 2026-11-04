@@ -2,12 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:privatelm/services/inference_service.dart';
 import 'package:privatelm/services/openai_server_service_io.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  // These integration tests exercise a real loopback HTTP server.
+  HttpOverrides.global = null;
+
   late OpenAiServerService server;
   late HttpClient client;
   const port = 18765;
@@ -28,8 +33,8 @@ void main() {
     Map<String, String> headers = const {},
     String? body,
   }) async {
-    final req = await client.openUrl(
-        method, Uri.parse('http://127.0.0.1:$port$path'));
+    final req =
+        await client.openUrl(method, Uri.parse('http://127.0.0.1:$port$path'));
     req.persistentConnection = false;
     headers.forEach(req.headers.set);
     if (body != null) req.write(body);
@@ -108,6 +113,145 @@ void main() {
 
     tearDown(Get.reset);
 
+    group('conversation attachments', () {
+      late Directory temp;
+      const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+
+      setUp(() async {
+        temp = await Directory.systemTemp.createTemp('server_attachment_test');
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, (call) async {
+          if (call.method == 'getTemporaryDirectory') return temp.path;
+          return null;
+        });
+      });
+
+      tearDown(() async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProvider, null);
+        // Response delivery can finish before the handler's finally cleanup.
+        await Future.doWhile(() async {
+          if (await temp.list().isEmpty) return false;
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          return true;
+        }).timeout(const Duration(seconds: 2));
+        await temp.delete();
+      });
+
+      Map<String, dynamic> attachmentMessage(
+          String kind, String text, List<int> bytes) {
+        final dataUrl = 'data:${kind == 'image' ? 'image/png' : 'audio/wav'};'
+            'base64,${base64Encode(bytes)}';
+        return {
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': text},
+            if (kind == 'image')
+              {
+                'type': 'image_url',
+                'image_url': {'url': dataUrl},
+              }
+            else
+              {
+                'type': 'input_audio',
+                'input_audio': {'data': dataUrl},
+              },
+          ],
+        };
+      }
+
+      for (final kind in ['image', 'audio']) {
+        for (final streaming in [false, true]) {
+          test('uses the latest user $kind (stream=$streaming)', () async {
+            final res = await send('POST', '/v1/chat/completions',
+                headers: json,
+                body: jsonEncode({
+                  'stream': streaming,
+                  'messages': [
+                    attachmentMessage(kind, 'Old attachment', [1, 2]),
+                    {'role': 'assistant', 'content': 'Previous reply'},
+                    attachmentMessage(kind, 'New attachment', [3, 4]),
+                  ],
+                }));
+
+            expect(res.statusCode, 200);
+            expect(kind == 'image' ? fake.lastImageBytes : fake.lastAudioBytes,
+                [3, 4]);
+            expect(fake.lastPrompt, 'New attachment');
+            expect(fake.lastHistory, [
+              {'role': 'user', 'content': 'Old attachment'},
+              {'role': 'assistant', 'content': 'Previous reply'},
+            ]);
+          });
+        }
+
+        test('does not reuse historical $kind for a text-only user turn',
+            () async {
+          final res = await send('POST', '/v1/chat/completions',
+              headers: json,
+              body: jsonEncode({
+                'messages': [
+                  attachmentMessage(kind, 'Old attachment', [1, 2]),
+                  {'role': 'assistant', 'content': 'Previous reply'},
+                  {'role': 'user', 'content': 'A new text question'},
+                ],
+              }));
+
+          expect(res.statusCode, 200);
+          expect(fake.lastImageBytes, isNull);
+          expect(fake.lastAudioBytes, isNull);
+          expect(fake.lastPrompt, 'A new text question');
+        });
+
+        test('accepts an attachment-only final user $kind', () async {
+          final res = await send('POST', '/v1/chat/completions',
+              headers: json,
+              body: jsonEncode({
+                'messages': [
+                  attachmentMessage(kind, '', [3, 4])
+                ],
+              }));
+
+          expect(res.statusCode, 200);
+          expect(kind == 'image' ? fake.lastImageBytes : fake.lastAudioBytes,
+              [3, 4]);
+          expect(fake.lastPrompt, 'Describe this attachment.');
+        });
+      }
+
+      test('changing attachment types does not combine separate user turns',
+          () async {
+        final res = await send('POST', '/v1/chat/completions',
+            headers: json,
+            body: jsonEncode({
+              'messages': [
+                attachmentMessage('image', 'Old image', [1, 2]),
+                {'role': 'assistant', 'content': 'Previous reply'},
+                attachmentMessage('audio', 'New audio', [3, 4]),
+              ],
+            }));
+
+        expect(res.statusCode, 200);
+        expect(fake.lastImageBytes, isNull);
+        expect(fake.lastAudioBytes, [3, 4]);
+      });
+
+      test('an old attachment cannot substitute for a missing final user turn',
+          () async {
+        final res = await send('POST', '/v1/chat/completions',
+            headers: json,
+            body: jsonEncode({
+              'messages': [
+                attachmentMessage('image', 'Old image', [1, 2]),
+                {'role': 'assistant', 'content': 'Previous reply'},
+              ],
+            }));
+
+        expect(res.statusCode, HttpStatus.badRequest);
+        expect(fake.lastPrompt, isNull);
+      });
+    });
+
     test('passes max_tokens through to the model', () async {
       final res = await send('POST', '/v1/chat/completions',
           headers: json, body: chatBody(maxTokens: 7));
@@ -115,8 +259,7 @@ void main() {
       expect(fake.lastMaxTokens, 7);
     });
 
-    test('passes OpenAI stop (string or list) through to the model',
-        () async {
+    test('passes OpenAI stop (string or list) through to the model', () async {
       var res = await send('POST', '/v1/chat/completions',
           headers: json,
           body: jsonEncode({
@@ -147,8 +290,8 @@ void main() {
 
     test('reports 503 when the generation is interrupted', () async {
       fake.tokensToEmit = 50;
-      final pending = send('POST', '/v1/chat/completions',
-          headers: json, body: chatBody());
+      final pending =
+          send('POST', '/v1/chat/completions', headers: json, body: chatBody());
       await Future.delayed(const Duration(milliseconds: 100));
       await fake.stopGeneration(); // e.g. the user started a chat reply
       expect((await pending).statusCode, HttpStatus.serviceUnavailable);
@@ -202,6 +345,10 @@ class FakeInference extends GetxService implements InferenceService {
   final loadedModelRuntime = 'litert'.obs;
 
   int? lastMaxTokens;
+  String? lastPrompt;
+  List<Map<String, String>>? lastHistory;
+  List<int>? lastImageBytes;
+  List<int>? lastAudioBytes;
   List<String> lastStop = const [];
   int stops = 0;
   Duration tokenInterval = const Duration(milliseconds: 20);
@@ -223,6 +370,12 @@ class FakeInference extends GetxService implements InferenceService {
     List<String> stopSequences = const [],
     void Function(String token)? onToken,
   }) async {
+    lastPrompt = prompt;
+    lastHistory = conversationHistory;
+    lastImageBytes =
+        imagePath == null ? null : await File(imagePath).readAsBytes();
+    lastAudioBytes =
+        audioPath == null ? null : await File(audioPath).readAsBytes();
     lastMaxTokens = maxTokens;
     lastStop = stopSequences;
     isGenerating.value = true;
