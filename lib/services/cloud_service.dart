@@ -111,6 +111,10 @@ class CloudService extends GetxService {
     }
 
     try {
+      temperature ??=
+          _hive.getSetting<num>(AppConstants.keyTemperature)?.toDouble();
+      maxTokens ??= _hive.getSetting<int>(AppConstants.keyMaxTokens);
+
       if (onToken != null && _supportsStreaming) {
         return await _streamOpenAICompatible(
           endpoint: _openAICompatibleEndpoint,
@@ -605,7 +609,10 @@ class CloudService extends GetxService {
     try {
       final response = await client.send(request).timeout(_connectTimeout);
       if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
+        final body = await response.stream
+            .timeout(streamIdleTimeout)
+            .transform(utf8.decoder)
+            .join();
         return 'ERROR: $providerLabel returned ${response.statusCode} — $body';
       }
 

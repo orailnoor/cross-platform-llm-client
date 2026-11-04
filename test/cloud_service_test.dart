@@ -10,31 +10,34 @@ import 'package:privatelm/services/cloud_service.dart';
 import 'package:privatelm/services/hive_service.dart';
 
 String _chunk(String token, {String? finish}) => 'data: ${jsonEncode({
-      'choices': [
-        {
-          'delta': {'content': token},
-          'finish_reason': finish,
-        }
-      ]
-    })}\n\n';
+          'choices': [
+            {
+              'delta': {'content': token},
+              'finish_reason': finish,
+            }
+          ]
+        })}\n\n';
 
 void main() {
   late Directory dir;
   late HttpServer server;
   late CloudService cloud;
+  late HiveService hive;
+  late Map<String, dynamic> requestBody;
   // What the fake provider streams back for the next request.
   late Future<void> Function(HttpResponse res) respond;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('cloud_test');
     Hive.init(dir.path);
-    final hive = await HiveService().init();
+    hive = await HiveService().init();
     Get.put(hive);
     Get.put(AppLogService());
 
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((req) async {
-      await req.drain<void>();
+      requestBody = jsonDecode(await utf8.decoder.bind(req).join())
+          as Map<String, dynamic>;
       req.response.headers.contentType =
           ContentType('text', 'event-stream', charset: 'utf-8');
       await respond(req.response);
@@ -63,6 +66,63 @@ void main() {
         onToken: tokens.add,
       );
 
+  for (final streaming in [false, true]) {
+    group(streaming ? 'streaming settings' : 'non-streaming settings', () {
+      setUp(() {
+        respond = (res) async {
+          if (streaming) {
+            res.write(_chunk('Hello', finish: 'stop'));
+            res.write('data: [DONE]\n\n');
+          } else {
+            res.headers.contentType = ContentType.json;
+            res.write(jsonEncode({
+              'choices': [
+                {
+                  'message': {'content': 'Hello'}
+                }
+              ]
+            }));
+          }
+          await res.close();
+        };
+      });
+
+      Future<String> request({double? temperature, int? maxTokens}) =>
+          cloud.sendMessage(
+            messages: [
+              {'role': 'user', 'content': 'hi'}
+            ],
+            temperature: temperature,
+            maxTokens: maxTokens,
+            onToken: streaming ? (_) {} : null,
+          );
+
+      test('uses saved generation settings', () async {
+        await hive.setSetting(AppConstants.keyTemperature, 0.25);
+        await hive.setSetting(AppConstants.keyMaxTokens, 77);
+
+        expect(await request(), 'Hello');
+        expect(requestBody['temperature'], 0.25);
+        expect(requestBody['max_tokens'], 77);
+      });
+
+      test('explicit overrides take precedence over saved settings', () async {
+        await hive.setSetting(AppConstants.keyTemperature, 0.25);
+        await hive.setSetting(AppConstants.keyMaxTokens, 77);
+
+        expect(await request(temperature: 0.0, maxTokens: 12), 'Hello');
+        expect(requestBody['temperature'], 0.0);
+        expect(requestBody['max_tokens'], 12);
+      });
+
+      test('uses application defaults when no settings are saved', () async {
+        expect(await request(), 'Hello');
+        expect(requestBody['temperature'], AppConstants.defaultTemperature);
+        expect(requestBody['max_tokens'], AppConstants.defaultMaxTokens);
+      });
+    });
+  }
+
   test('a complete stream returns the text', () async {
     respond = (res) async {
       res.write(_chunk('Hello '));
@@ -75,8 +135,7 @@ void main() {
     expect(tokens.join(), 'Hello world');
   });
 
-  test('an error event mid-stream is reported, not shown as a reply',
-      () async {
+  test('an error event mid-stream is reported, not shown as a reply', () async {
     respond = (res) async {
       res.write(_chunk('Partial '));
       res.write('data: ${jsonEncode({
@@ -125,6 +184,33 @@ void main() {
     final result = await send([]).timeout(const Duration(seconds: 3));
     expect(result, startsWith('ERROR:'));
     expect(result, contains("didn't respond in time"));
+  });
+
+  test('a stalled HTTP error body times out instead of hanging', () async {
+    CloudService.streamIdleTimeout = const Duration(milliseconds: 300);
+    respond = (res) async {
+      res.statusCode = HttpStatus.tooManyRequests;
+      res.write('Rate limit exceeded');
+      await res
+          .flush(); // Send headers and part of the error, but never finish.
+    };
+
+    final result = await send([]).timeout(const Duration(seconds: 3));
+    expect(result, startsWith('ERROR:'));
+    expect(result, contains("didn't respond in time"));
+  });
+
+  test('a complete HTTP error body preserves the provider error', () async {
+    respond = (res) async {
+      res.statusCode = HttpStatus.tooManyRequests;
+      res.write('Rate limit exceeded');
+      await res.close();
+    };
+
+    final result = await send([]);
+    expect(result, startsWith('ERROR:'));
+    expect(result, contains('429'));
+    expect(result, contains('Rate limit exceeded'));
   });
 
   test('cancel() aborts the stream in progress', () async {
