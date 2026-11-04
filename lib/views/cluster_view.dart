@@ -9,7 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../core/ui.dart';
 import '../services/cluster_service.dart';
 
-/// Phone cluster: pick Master (runs the model) or Worker (lends this phone),
+/// Device cluster: pick Master (runs the model) or Worker (lends this device),
 /// and pair them by scanning the worker's QR code.
 class ClusterView extends StatefulWidget {
   const ClusterView({super.key});
@@ -44,7 +44,7 @@ class _ClusterViewState extends State<ClusterView> {
     final t = AppTokens.of(context);
     return Scaffold(
       backgroundColor: t.bg,
-      appBar: appScreenBar(context, title: 'Phone cluster', showBack: true),
+      appBar: appScreenBar(context, title: 'Device cluster', showBack: true),
       body: Obx(() {
         final role = cluster.role;
         return ListView(
@@ -61,9 +61,10 @@ class _ClusterViewState extends State<ClusterView> {
               onChanged: cluster.setRole,
             ),
             const SizedBox(height: 16),
-            if (role != ClusterRole.off && cluster.wifiAddress.value == null) ...[
+            if (role != ClusterRole.off &&
+                cluster.wifiAddress.value == null) ...[
               AppNotice(
-                'Turn on Wi-Fi. All phones in the cluster must be on the same Wi-Fi network.',
+                'Turn on Wi-Fi. All nodes in the cluster must be on the same Wi-Fi network.',
                 icon: Icons.wifi_off_rounded,
                 color: t.orange,
               ),
@@ -83,10 +84,11 @@ class _ClusterViewState extends State<ClusterView> {
   List<Widget> _offSection() => [
         AppNotice(
           ClusterService.canBeMaster
-              ? 'Run models too big for one phone by sharing the work across '
-                  'phones on the same Wi-Fi.\n\n'
-                  'Master: the phone you chat on. It runs the model.\n'
-                  'Worker: a phone that lends its memory to the master.'
+              ? 'Run models too big for one device by sharing the work across '
+                  'nodes on the same Wi-Fi.\n\n'
+                  'Master: the Android phone you chat on. It runs the model.\n'
+                  'Worker: a phone, tablet, Mac or PC that lends its memory and '
+                  'GPU to the master.'
               : 'Help an Android phone running PrivateLM run models too big for '
                   'it alone: choose Worker, then scan this device\'s QR code '
                   'from that phone.',
@@ -108,9 +110,11 @@ class _ClusterViewState extends State<ClusterView> {
         const SizedBox(height: 12),
         Text('Worker stopped', style: t.bodyStrong),
         const SizedBox(height: 4),
-        Text(s.error ?? 'Unknown error', style: t.caption, textAlign: TextAlign.center),
+        Text(s.error ?? 'Unknown error',
+            style: t.caption, textAlign: TextAlign.center),
         const SizedBox(height: 16),
-        PillButton(label: 'Try again', primary: true, onPressed: cluster.startWorker),
+        PillButton(
+            label: 'Try again', primary: true, onPressed: cluster.startWorker),
       ]);
     } else if (s.peer != null) {
       body = _centered(context, [
@@ -123,14 +127,21 @@ class _ClusterViewState extends State<ClusterView> {
         Row(children: [
           Expanded(child: _Stat(label: 'Holding', value: _gb(s.heldMb))),
           Expanded(child: _Stat(label: 'Free at start', value: _gb(s.ramMb))),
-          Expanded(child: _Stat(label: 'Memory speed', value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
+          Expanded(
+              child: _Stat(
+                  label: 'Memory speed',
+                  value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
         ]),
       ]);
     } else if (!s.running || qr == null) {
       body = _centered(context, [
-        const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5)),
+        const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.5)),
         const SizedBox(height: 16),
-        Text(s.running ? 'Waiting for Wi-Fi…' : 'Measuring this phone…', style: t.caption),
+        Text(s.running ? 'Waiting for Wi-Fi…' : 'Measuring this device…',
+            style: t.caption),
       ]);
     } else {
       body = _centered(context, [
@@ -143,7 +154,7 @@ class _ClusterViewState extends State<ClusterView> {
           child: QrImageView(data: qr, size: 220, padding: EdgeInsets.zero),
         ),
         const SizedBox(height: 16),
-        Text('Scan this from the master phone', style: t.bodyStrong),
+        Text('Scan this from the master device', style: t.bodyStrong),
         const SizedBox(height: 6),
         Row(mainAxisSize: MainAxisSize.min, children: [
           StatusDot(t.green, size: 8),
@@ -153,7 +164,10 @@ class _ClusterViewState extends State<ClusterView> {
         const SizedBox(height: 16),
         Row(children: [
           Expanded(child: _Stat(label: 'Free memory', value: _gb(s.ramMb))),
-          Expanded(child: _Stat(label: 'Memory speed', value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
+          Expanded(
+              child: _Stat(
+                  label: 'Memory speed',
+                  value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
         ]),
       ]);
     }
@@ -180,11 +194,15 @@ class _ClusterViewState extends State<ClusterView> {
       ],
       AppCard(padding: const EdgeInsets.fromLTRB(16, 24, 16, 20), child: body),
       SectionFootnote(ClusterService.workerStopsWithApp
-          ? 'Keep this device plugged in, on the same Wi-Fi, with PrivateLM open: '
-              'iOS pauses apps in the background. Close PrivateLM to stop sharing.'
+          ? (ClusterService.isDesktop
+              ? 'Keep this device plugged in, on the same Wi-Fi, with PrivateLM '
+                  'open. Close PrivateLM to stop sharing.'
+              : 'Keep this device plugged in, on the same Wi-Fi, with PrivateLM '
+                  'open: iOS pauses apps in the background. Close PrivateLM to '
+                  'stop sharing.')
           : 'Keep this phone plugged in and on the same Wi-Fi, with PrivateLM '
               'open: the screen stays on while sharing, because Android slows '
-              'background work. Set Phone cluster to Off to stop.'),
+              'background work. Set Device cluster to Off to stop.'),
     ];
   }
 
@@ -211,7 +229,8 @@ class _ClusterViewState extends State<ClusterView> {
           EmptyState(
             icon: Icons.devices_other_rounded,
             title: 'No workers yet',
-            message: 'On each other phone, open Phone cluster, choose Worker, '
+            message:
+                'On each other device, open Device cluster, choose Worker, '
                 'then scan the QR code it shows.',
           ),
         ])
@@ -224,7 +243,8 @@ class _ClusterViewState extends State<ClusterView> {
               subtitle: [
                 w.endpoint,
                 if (w.ramMb != null) '${_gb(w.ramMb!)} free',
-                if (w.bandwidth != null) '${w.bandwidth!.toStringAsFixed(1)} GB/s',
+                if (w.bandwidth != null)
+                  '${w.bandwidth!.toStringAsFixed(1)} GB/s',
               ].join(' · '),
               trailing: IconButton(
                 icon: Icon(Icons.close_rounded, color: t.muted),
@@ -235,8 +255,8 @@ class _ClusterViewState extends State<ClusterView> {
         ]),
       const SectionFootnote(
         'Used the next time you load a GGUF model. If the model fits on this '
-        'phone you can keep it here, which is faster. If it doesn\'t, the '
-        'fastest phones get the biggest share and phones that aren\'t needed '
+        'device you can keep it here, which is faster. If it doesn\'t, the '
+        'fastest nodes get the biggest share and nodes that aren\'t needed '
         'are left out.',
       ),
       const SectionHeader('Other ways to add'),
@@ -295,7 +315,8 @@ class _ClusterViewState extends State<ClusterView> {
             onSubmitted: (v) => Navigator.pop(ctx, v),
           ),
           const SizedBox(height: 16),
-          PrimaryButton(label: 'Add', onPressed: () => Navigator.pop(ctx, ctrl.text)),
+          PrimaryButton(
+              label: 'Add', onPressed: () => Navigator.pop(ctx, ctrl.text)),
         ],
       ),
     );
@@ -316,7 +337,7 @@ class _ClusterViewState extends State<ClusterView> {
 
 String _gb(num mb) => '${(mb / 1024).toStringAsFixed(1)} GB';
 
-/// How the loaded model is spread across phones: a stacked bar and legend.
+/// How the loaded model is spread across nodes: a stacked bar and legend.
 class _SplitCard extends StatelessWidget {
   final List<ClusterShare> shares;
   const _SplitCard({required this.shares});
@@ -324,13 +345,20 @@ class _SplitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = AppTokens.of(context);
-    final colors = [t.accent, t.green, t.orange, const Color(0xFFAF52DE), t.red];
+    final colors = [
+      t.accent,
+      t.green,
+      t.orange,
+      const Color(0xFFAF52DE),
+      t.red
+    ];
     final total = shares.fold<double>(0, (a, s) => a + s.mb);
     return AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Loaded model', style: t.bodyStrong),
         const SizedBox(height: 2),
-        Text('Running on ${shares.length} phones · ${_gb(total)}', style: t.caption),
+        Text('Running on ${shares.length} nodes · ${_gb(total)}',
+            style: t.caption),
         const SizedBox(height: 14),
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
@@ -341,7 +369,8 @@ class _SplitCard extends StatelessWidget {
                 Expanded(
                   flex: (shares[i].mb / total * 1000).round().clamp(1, 1000),
                   child: Container(
-                    margin: EdgeInsets.only(right: i == shares.length - 1 ? 0 : 2),
+                    margin:
+                        EdgeInsets.only(right: i == shares.length - 1 ? 0 : 2),
                     color: colors[i % colors.length],
                   ),
                 ),
@@ -357,15 +386,19 @@ class _SplitCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  shares[i].isThisPhone ? '${shares[i].name} (this phone)' : shares[i].name,
+                  shares[i].isThisDevice
+                      ? '${shares[i].name} (this device)'
+                      : shares[i].name,
                   style: t.body,
                 ),
               ),
-              Text('${(shares[i].mb / total * 100).round()}%', style: t.bodyStrong),
+              Text('${(shares[i].mb / total * 100).round()}%',
+                  style: t.bodyStrong),
               const SizedBox(width: 10),
               SizedBox(
                 width: 58,
-                child: Text(_gb(shares[i].mb), textAlign: TextAlign.right, style: t.caption),
+                child: Text(_gb(shares[i].mb),
+                    textAlign: TextAlign.right, style: t.caption),
               ),
             ]),
           ),
@@ -399,10 +432,11 @@ class _PulsingDot extends StatefulWidget {
   State<_PulsingDot> createState() => _PulsingDotState();
 }
 
-class _PulsingDotState extends State<_PulsingDot> with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))
-        ..repeat();
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1400))
+    ..repeat();
 
   @override
   void dispose() {
@@ -429,7 +463,8 @@ class _PulsingDotState extends State<_PulsingDot> with SingleTickerProviderState
           Container(
             width: 24,
             height: 24,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+            decoration:
+                BoxDecoration(shape: BoxShape.circle, color: widget.color),
             child: const Icon(Icons.hub_rounded, size: 14, color: Colors.white),
           ),
         ]),
@@ -493,7 +528,7 @@ class _QrScanPageState extends State<_QrScanPage> {
           right: 24,
           bottom: 48,
           child: Text(
-            'Point at the QR code on the worker phone',
+            'Point at the QR code on the worker device',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white, fontSize: 15),
           ),

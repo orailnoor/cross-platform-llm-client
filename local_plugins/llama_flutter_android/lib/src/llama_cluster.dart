@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-/// A phone running as a cluster worker, found on the local network, scanned
+/// A device running as a cluster worker, found on the local network, scanned
 /// from its QR code, or added by hand.
 class ClusterWorker {
   final String name;
@@ -42,7 +42,13 @@ class ClusterWorker {
 
   /// The same device at a new address.
   ClusterWorker movedTo(String host, int port) => ClusterWorker(
-      name: name, host: host, port: port, ramMb: ramMb, bandwidth: bandwidth, model: model, id: id);
+      name: name,
+      host: host,
+      port: port,
+      ramMb: ramMb,
+      bandwidth: bandwidth,
+      model: model,
+      id: id);
 
   Map<String, dynamic> toMap() => {
         'name': name,
@@ -55,7 +61,7 @@ class ClusterWorker {
       };
 }
 
-/// State of this phone's worker service.
+/// State of this device's worker service.
 class ClusterWorkerStatus {
   /// starting, running, stopped or error.
   final String state;
@@ -94,9 +100,9 @@ class ClusterWorkerStatus {
   bool get starting => state == 'starting';
 }
 
-/// Phone cluster: one phone (the master) runs a model whose layers are
-/// spread across other phones (workers) on the same Wi-Fi, using llama.cpp's
-/// RPC backend. Android arm64 only.
+/// Device cluster: one device (the master) runs a model whose layers are
+/// spread across other devices (workers) on the same Wi-Fi, using llama.cpp's
+/// RPC backend. The master is Android; iOS, macOS and Windows can be workers.
 ///
 /// The RPC protocol has no authentication: only run workers on a network you
 /// trust.
@@ -104,15 +110,16 @@ class LlamaCluster {
   static const _channel = MethodChannel('llama_flutter_android/cluster');
   static const defaultPort = 50052;
 
-  /// Starts serving this phone's CPU to a master, in a foreground service
-  /// that keeps running in the background.
+  /// Starts serving this device's CPU/GPU to a master. On Android it runs in
+  /// a foreground service; on desktop and iOS it lives until the app closes.
   static Future<void> startWorker({int port = defaultPort, int? threads}) =>
       _channel.invokeMethod('startWorker', {'port': port, 'threads': threads});
 
   static Future<void> stopWorker() => _channel.invokeMethod('stopWorker');
 
   static Future<ClusterWorkerStatus> workerStatus() async {
-    final m = await _channel.invokeMapMethod<String, dynamic>('workerStatus') ?? {};
+    final m =
+        await _channel.invokeMapMethod<String, dynamic>('workerStatus') ?? {};
     return ClusterWorkerStatus(
       state: m['state'] as String? ?? 'stopped',
       error: m['error'] as String?,
@@ -139,14 +146,15 @@ class LlamaCluster {
   static Future<int> localFreeRamMb() async =>
       await _channel.invokeMethod<int>('localFreeRamMb') ?? 0;
 
-  /// This phone's memory read speed in GB/s (~0.2 s to measure).
+  /// This device's memory read speed in GB/s (~0.2 s to measure).
   static Future<double> benchmark() async =>
       await _channel.invokeMethod<double>('benchmark') ?? 0;
 
   /// Where the last model load put its weights: llama.cpp buffer name
   /// ("CPU_Mapped", "RPC0[host:port]", …) and size in MB.
   static Future<List<({String name, double mb})>> lastLoadBuffers() async {
-    final list = await _channel.invokeListMethod<Map<dynamic, dynamic>>('lastLoadBuffers');
+    final list = await _channel
+        .invokeListMethod<Map<dynamic, dynamic>>('lastLoadBuffers');
     return [
       for (final m in list ?? const [])
         (name: m['name'] as String, mb: (m['mb'] as num).toDouble()),

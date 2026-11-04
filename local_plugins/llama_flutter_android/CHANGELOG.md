@@ -1,3 +1,18 @@
+## 0.3.1 (November 4, 2026)
+
+### Added
+- **macOS and Windows cluster workers** — a PrivateLM Android master can now
+  use Macs (Metal or CPU) and Windows PCs (CPU) as workers over ggml's RPC
+  backend. Both platforms register only `llama_flutter_android/cluster`; local
+  GGUF inference stays Android/iOS-only.
+- Shared Apple cluster code in `apple/Classes`, compiled by both the iOS and
+  macOS pods.
+- `scripts/build_ggml_macos.sh` builds the CPU/Metal/RPC ggml static library
+  from the same vendored llama.cpp tree as Android and iOS.
+
+### Changed
+- Cluster UI wording now says "Device cluster" and works on desktop workers.
+
 ## 0.3.0 (October 12, 2026)
 
 ### Added

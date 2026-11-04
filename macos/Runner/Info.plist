@@ -36,5 +36,11 @@
 	<string>This app needs access to your photo library to select images to chat about.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>This app needs access to save generated images to your gallery.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>PrivateLM uses the local network to connect this device to a device cluster on the same Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_privatelm._tcp</string>
+	</array>
 </dict>
 </plist>

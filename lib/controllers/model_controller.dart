@@ -658,8 +658,8 @@ class ModelController extends GetxController {
       );
       return;
     }
-    // The phone cluster splits GGUF models only (llama.cpp); a LiteRT model
-    // always runs on this phone, so say so instead of silently ignoring the
+    // The device cluster splits GGUF models only (llama.cpp); a LiteRT model
+    // always runs on this device, so say so instead of silently ignoring the
     // workers.
     if (isLiteRt &&
         Get.isRegistered<ClusterService>() &&
@@ -856,9 +856,9 @@ class ModelController extends GetxController {
     required int fileBytes,
     required bool isLiteRt,
   }) async {
-    // Phone cluster: the model is split across phones, so this phone's free
+    // Device cluster: the model is split across devices, so this device's free
     // memory alone says little. ClusterService checks the whole cluster's
-    // memory (and offers this-phone-only when it fits) right before loading.
+    // memory (and offers this-device-only when it fits) right before loading.
     if (!isLiteRt &&
         filename.toLowerCase().endsWith('.gguf') &&
         Get.isRegistered<ClusterService>() &&
@@ -1435,11 +1435,11 @@ class ModelController extends GetxController {
     } catch (_) {}
   }
 
-  /// Phone cluster errors (from ClusterService or the native cluster setup)
+  /// Device cluster errors (from ClusterService or the native cluster setup)
   /// already say what to do; anything else gets the generic tips.
   static bool _isClusterError(String rawError) {
     final lower = rawError.toLowerCase();
-    return lower.contains('phone cluster') ||
+    return lower.contains('device cluster') ||
         lower.contains('worker') ||
         lower.contains('cluster:') ||
         lower.contains('too big for these');
@@ -1499,7 +1499,7 @@ class ModelController extends GetxController {
     bool showDetails = false;
     showAppSheet<void>(
       context,
-      title: isCluster ? 'Phone cluster couldn\'t load' : 'Model load failed',
+      title: isCluster ? 'Device cluster couldn\'t load' : 'Model load failed',
       subtitle: friendlyMsg,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setState) {
@@ -1511,9 +1511,9 @@ class ModelController extends GetxController {
                   padding: EdgeInsets.fromLTRB(0, 0, 0, 10)),
               if (isCluster) ...[
                 _buildTipRow(ctx, Icons.hub_outlined,
-                    'On each worker, open PrivateLM > Phone cluster and check that Worker is on and shows its QR code.'),
+                    'On each worker, open PrivateLM > Device cluster and check that Worker is on and shows its QR code.'),
                 _buildTipRow(ctx, Icons.wifi_rounded,
-                    'Keep every device on the same Wi-Fi. iPads must keep PrivateLM open.'),
+                    'Keep every device on the same Wi-Fi. Workers must keep PrivateLM open.'),
               ] else ...[
                 _buildTipRow(ctx, Icons.delete_outline_rounded,
                     'Delete the model and try redownloading it completely.'),

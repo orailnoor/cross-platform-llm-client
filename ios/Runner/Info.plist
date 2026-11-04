@@ -84,7 +84,7 @@
 		</dict>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Phone cluster: lets your other devices on this Wi-Fi use this device to help run a model.</string>
+	<string>Device cluster: lets your other devices on this Wi-Fi use this device to help run a model.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_privatelm._tcp</string>

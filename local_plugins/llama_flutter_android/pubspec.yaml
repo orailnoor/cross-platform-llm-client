@@ -1,6 +1,6 @@
 name: llama_flutter_android
-description: Run GGUF models on Android with llama.cpp - MIT licensed, Android-only Flutter plugin
-version: 0.3.0
+description: Run GGUF models on Android/iOS with llama.cpp, and lend macOS/Windows devices to a PrivateLM cluster - MIT licensed Flutter plugin
+version: 0.3.1
 homepage: https://github.com/dragneel2074/Llama-Flutter
 repository: https://github.com/dragneel2074/Llama-Flutter
 issue_tracker: https://github.com/dragneel2074/Llama-Flutter/issues
@@ -28,3 +28,7 @@ flutter:
         pluginClass: LlamaFlutterAndroidPlugin
       ios:
         pluginClass: LlamaFlutterAndroidPlugin
+      macos:
+        pluginClass: LlamaClusterPlugin
+      windows:
+        pluginClass: LlamaFlutterAndroidPluginCApi

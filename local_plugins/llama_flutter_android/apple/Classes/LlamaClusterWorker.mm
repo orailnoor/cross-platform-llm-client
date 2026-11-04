@@ -7,6 +7,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <mach/mach.h>
+#if TARGET_OS_OSX
+#include <mach/mach_host.h>
+#include <mach/vm_statistics.h>
+#endif
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -129,7 +133,22 @@ static std::string currentPeer() {
 }
 
 + (long)availableMemoryMb {
-    return (long)(os_proc_available_memory() / (1024 * 1024));
+#if TARGET_OS_OSX
+    // os_proc_available_memory() is iOS-only. On macOS the system's free +
+    // inactive pages are what a worker can reasonably ask the OS for.
+    vm_statistics64_data_t stats;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                          (host_info64_t)&stats, &count) == KERN_SUCCESS) {
+        const vm_size_t page = vm_page_size;
+        const uint64_t bytes = (uint64_t)(stats.free_count + stats.inactive_count) * page;
+        return (long)(bytes / (1024 * 1024));
+    }
+    return 0;
+#else
+    const size_t available = os_proc_available_memory();
+    return available > 0 ? (long)(available / (1024 * 1024)) : 0;
+#endif
 }
 
 + (long)footprintMb {

@@ -14,7 +14,7 @@ import '../core/ui.dart';
 import 'app_log_service.dart';
 import 'hive_service.dart';
 
-/// What this phone does in a phone cluster.
+/// What this device does in a device cluster.
 enum ClusterRole {
   off,
 
@@ -25,36 +25,51 @@ enum ClusterRole {
   worker,
 }
 
-/// One phone's part of the loaded model.
+/// One device's part of the loaded model.
 class ClusterShare {
   final String name;
   final double mb;
-  final bool isThisPhone;
-  const ClusterShare(this.name, this.mb, {this.isThisPhone = false});
+  final bool isThisDevice;
+  const ClusterShare(this.name, this.mb, {this.isThisDevice = false});
 }
 
-/// A phone the master can put layers on, for planning a load.
-class _Phone {
+/// A device the master can put layers on, for planning a load.
+class _Node {
   final ClusterWorker? worker; // null: the master itself
   final double capacityMb;
   final double speed; // GB/s
   double assignedMb = 0;
-  _Phone(this.worker, this.capacityMb, this.speed);
+  _Node(this.worker, this.capacityMb, this.speed);
 }
 
-/// Phone cluster: spread a GGUF model across phones on the same Wi-Fi.
+/// Device cluster: spread a GGUF model across devices on the same Wi-Fi.
 /// The master runs the model; workers hold part of its layers.
+///
+/// Android nodes can be master or worker. iPhone/iPad, Macs and Windows PCs
+/// are workers: their CPU/GPU serves an Android master's layers.
 class ClusterService extends GetxService {
   final HiveService _hive = Get.find<HiveService>();
 
-  static bool get isSupported => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  static bool get isSupported =>
+      !kIsWeb &&
+      (Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isMacOS ||
+          Platform.isWindows);
 
-  /// Running a model across workers is Android-only for now; iOS devices
-  /// can be workers (their GPU serves a master's layers).
+  /// Running a model across workers is Android-only for now; desktop and iOS
+  /// devices can be workers (their GPU serves a master's layers).
   static bool get canBeMaster => !kIsWeb && Platform.isAndroid;
 
-  /// iOS can't stop the worker without closing the app.
-  static bool get workerStopsWithApp => !kIsWeb && Platform.isIOS;
+  /// These platforms can't stop the in-process ggml RPC server without
+  /// closing the app.
+  static bool get workerStopsWithApp =>
+      !kIsWeb && (Platform.isIOS || Platform.isMacOS || Platform.isWindows);
+
+  /// macOS/Windows workers are desktop machines; the UI uses this to avoid
+  /// desktop-specific wording and camera-only flows.
+  static bool get isDesktop =>
+      !kIsWeb && (Platform.isMacOS || Platform.isWindows);
 
   /// QR codes a worker shows: privatelm://worker?host=…&port=…
   static const _qrScheme = 'privatelm';
@@ -71,17 +86,17 @@ class ClusterService extends GetxService {
   final found = <ClusterWorker>[].obs;
   final isScanning = false.obs;
 
-  /// This phone's worker service.
+  /// This device's worker service.
   final worker = const ClusterWorkerStatus(state: 'stopped').obs;
   final _workerRequested = false.obs;
 
   /// The API server is running (other devices, e.g. a PC, use the model).
   final serving = false.obs;
 
-  /// This phone's Wi-Fi address, or null when it isn't on Wi-Fi.
+  /// This device's LAN address, or null when it isn't on Wi-Fi.
   final wifiAddress = RxnString();
 
-  /// How the loaded model is spread across phones; empty when it isn't.
+  /// How the loaded model is spread across nodes; empty when it isn't.
   final split = <ClusterShare>[].obs;
 
   String deviceName = '';
@@ -98,18 +113,30 @@ class ClusterService extends GetxService {
   String? get splitSummary {
     final total = split.fold<double>(0, (a, s) => a + s.mb);
     if (split.length < 2 || total <= 0) return null;
-    return split.map((s) => '${s.name} ${(s.mb / total * 100).round()}%').join(' · ');
+    return split
+        .map((s) => '${s.name} ${(s.mb / total * 100).round()}%')
+        .join(' · ');
   }
 
   @override
   void onInit() {
     super.onInit();
-    enabled.value = _hive.getSetting<bool>(AppConstants.keyClusterEnabled) ?? false;
-    final saved = _hive.getSetting<List>(AppConstants.keyClusterWorkers) ?? const [];
+    enabled.value =
+        _hive.getSetting<bool>(AppConstants.keyClusterEnabled) ?? false;
+    final saved =
+        _hive.getSetting<List>(AppConstants.keyClusterWorkers) ?? const [];
     workers.assignAll(saved.whereType<Map>().map(ClusterWorker.fromMap));
     if (isSupported) {
       if (Platform.isIOS) {
         DeviceInfoPlugin().iosInfo.then((info) => deviceName = info.modelName);
+      } else if (Platform.isMacOS) {
+        DeviceInfoPlugin()
+            .macOsInfo
+            .then((info) => deviceName = info.computerName);
+      } else if (Platform.isWindows) {
+        DeviceInfoPlugin()
+            .windowsInfo
+            .then((info) => deviceName = info.computerName);
       } else {
         DeviceInfoPlugin().androidInfo.then((info) => deviceName = info.model);
       }
@@ -146,7 +173,8 @@ class ClusterService extends GetxService {
     if (next == role) return;
     if (next != ClusterRole.worker && role == ClusterRole.worker) {
       if (workerStopsWithApp) {
-        showToast('Still sharing', 'Close PrivateLM to stop sharing this device.');
+        showToast(
+            'Still sharing', 'Close PrivateLM to stop sharing this device.');
         return;
       }
       await stopWorker();
@@ -158,7 +186,7 @@ class ClusterService extends GetxService {
 
   // ── Worker ─────────────────────────────────────────────────────────────
 
-  /// What the master scans to add this phone, once the worker is running.
+  /// What the master scans to add this device, once the worker is running.
   String? get workerQrData {
     final host = wifiAddress.value;
     final status = worker.value;
@@ -178,7 +206,9 @@ class ClusterService extends GetxService {
       // Unrestricted battery keeps Android (Samsung especially) from moving
       // the worker to slow cores once it gets busy.
       final status = await LlamaCluster.workerStatus();
-      if (!status.batteryUnrestricted) await LlamaCluster.requestBatteryUnrestricted();
+      if (!status.batteryUnrestricted) {
+        await LlamaCluster.requestBatteryUnrestricted();
+      }
     }
     _workerRequested.value = true;
     worker.value = const ClusterWorkerStatus(state: 'starting');
@@ -214,19 +244,42 @@ class ClusterService extends GetxService {
     try {
       worker.value = await LlamaCluster.workerStatus();
     } catch (e) {
-      Get.find<AppLogService>().error('Cluster worker status failed', details: e);
+      Get.find<AppLogService>()
+          .error('Cluster worker status failed', details: e);
     }
   }
 
-  /// Finds this device's IPv4 address on Wi-Fi (wlan* on Android, en0 on
-  /// iOS), if any.
+  /// Finds this device's LAN IPv4 address (wlan* on Android, en0 on Apple
+  /// platforms, Wi-Fi/Ethernet on Windows), if any.
   Future<void> refreshWifiAddress() async {
+    String? pick(Iterable<NetworkInterface> interfaces) {
+      for (final interface in interfaces) {
+        for (final address in interface.addresses) {
+          // Skip loopback and link-local (169.254.x.x) addresses.
+          if (address.isLoopback || address.address.startsWith('169.254.')) {
+            continue;
+          }
+          return address.address;
+        }
+      }
+      return null;
+    }
+
     try {
-      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
-      final wifi = interfaces.where((i) => i.name.startsWith('wlan') || i.name == 'en0');
-      wifiAddress.value = wifi.isEmpty || wifi.first.addresses.isEmpty
-          ? null
-          : wifi.first.addresses.first.address;
+      final interfaces =
+          await NetworkInterface.list(type: InternetAddressType.IPv4);
+      final preferred = interfaces.where((interface) {
+        if (Platform.isAndroid) return interface.name.startsWith('wlan');
+        if (Platform.isIOS || Platform.isMacOS) return interface.name == 'en0';
+        if (Platform.isWindows) {
+          final name = interface.name.toLowerCase();
+          return name.contains('wi-fi') ||
+              name.contains('wifi') ||
+              name.contains('ethernet');
+        }
+        return false;
+      });
+      wifiAddress.value = pick(preferred) ?? pick(interfaces);
     } catch (_) {
       wifiAddress.value = null;
     }
@@ -241,7 +294,10 @@ class ClusterService extends GetxService {
     final params = uri?.queryParameters ?? const {};
     final host = params['host'];
     final port = int.tryParse(params['port'] ?? '');
-    if (uri == null || uri.scheme != _qrScheme || host == null || port == null) {
+    if (uri == null ||
+        uri.scheme != _qrScheme ||
+        host == null ||
+        port == null) {
       return 'That isn\'t a PrivateLM worker code';
     }
     return _add(ClusterWorker(
@@ -259,8 +315,9 @@ class ClusterService extends GetxService {
   /// an error message, or null on success.
   Future<String?> addManual(String input) async {
     final text = input.trim();
-    if (text.isEmpty) return 'Enter the worker phone\'s IP address';
-    final host = text.contains(':') ? text.substring(0, text.lastIndexOf(':')) : text;
+    if (text.isEmpty) return 'Enter the worker device\'s IP address';
+    final host =
+        text.contains(':') ? text.substring(0, text.lastIndexOf(':')) : text;
     final port = text.contains(':')
         ? int.tryParse(text.substring(text.lastIndexOf(':') + 1))
         : LlamaCluster.defaultPort;
@@ -294,14 +351,15 @@ class ClusterService extends GetxService {
     }
     if (moved > 0) {
       await _save();
-      Get.find<AppLogService>().info('Phone cluster: found $moved worker(s) at a new address');
+      Get.find<AppLogService>()
+          .info('Device cluster: found $moved worker(s) at a new address');
     }
     return unreachable;
   }
 
   Future<String?> _add(ClusterWorker worker) async {
     if (!await LlamaCluster.probe(worker.endpoint)) {
-      return 'Can\'t reach ${worker.endpoint}. Check that the phone is a worker '
+      return 'Can\'t reach ${worker.endpoint}. Check that the device is a worker '
           'and on the same Wi-Fi.';
     }
     workers.removeWhere((w) => w.endpoint == worker.endpoint);
@@ -345,11 +403,11 @@ class ClusterService extends GetxService {
   /// workers used; throws with a readable message if the model won't fit
   /// or a worker can't be reached.
   ///
-  /// If the model fits on this phone, asks whether to keep it here (faster:
+  /// If the model fits on this device, asks whether to keep it here (faster:
   /// no Wi-Fi in the loop) or share it with the workers anyway. Otherwise
-  /// the fastest phones are filled first, up to their free memory: phones
+  /// the fastest nodes are filled first, up to their free memory: nodes
   /// take turns on every token, so the most work belongs on the fastest one,
-  /// and phones that aren't needed are left out (one less Wi-Fi hop each).
+  /// and nodes that aren't needed are left out (one less Wi-Fi hop each).
   Future<int> applyForNextLoad(String modelPath, {String? modelName}) async {
     split.clear();
     if (!isSupported) return 0;
@@ -361,10 +419,12 @@ class ClusterService extends GetxService {
     // Workers that are off or away are left out, not fatal: the model may
     // fit without them.
     final offline = await relocateWorkers();
-    final available = workers.where((w) => !offline.any((o) => o.endpoint == w.endpoint)).toList();
+    final available = workers
+        .where((w) => !offline.any((o) => o.endpoint == w.endpoint))
+        .toList();
     if (offline.isNotEmpty) {
       final names = offline.map((w) => w.model ?? w.name).join(', ');
-      showToast('Phone cluster', 'Not reachable, loading without: $names');
+      showToast('Device cluster', 'Not reachable, loading without: $names');
     }
 
     final modelMb = await File(modelPath).length() / (1024 * 1024);
@@ -372,18 +432,19 @@ class ClusterService extends GetxService {
     _localSpeed ??= await LlamaCluster.benchmark();
     // Free RAM: workers report theirs when they start. The master also runs
     // the app and the KV cache, so it offers less of its own.
-    final master = _Phone(null, await LlamaCluster.localFreeRamMb() * 0.7, _localSpeed!);
-    final phones = [
+    final master =
+        _Node(null, await LlamaCluster.localFreeRamMb() * 0.7, _localSpeed!);
+    final nodes = [
       master,
       for (final w in available)
-        _Phone(w, (w.ramMb ?? 2000) * 0.75, w.bandwidth ?? _unknownSpeed),
+        _Node(w, (w.ramMb ?? 2000) * 0.75, w.bandwidth ?? _unknownSpeed),
     ];
-    final totalMb = phones.fold<double>(0, (a, p) => a + p.capacityMb);
+    final totalMb = nodes.fold<double>(0, (a, p) => a + p.capacityMb);
     if (needMb > totalMb) {
       throw Exception('This model (${_gb(modelMb)}) is too big for these '
-          '${phones.length} phones: together they have about ${_gb(totalMb)} '
+          '${nodes.length} nodes: together they have about ${_gb(totalMb)} '
           'free.${offline.isEmpty ? '' : ' Not reachable: ${offline.map((w) => w.model ?? w.name).join(', ')}.'} '
-          'Add another worker, close apps on the phones, or pick a '
+          'Add another worker, close apps on the nodes, or pick a '
           'smaller model.');
     }
 
@@ -398,12 +459,13 @@ class ClusterService extends GetxService {
         await LlamaCluster.clear();
         return 0;
       }
-      _splitBySpeed(phones, needMb);
+      _splitBySpeed(nodes, needMb);
     } else {
-      _fillFastestFirst(phones, needMb);
+      _fillFastestFirst(nodes, needMb);
     }
 
-    final used = phones.where((p) => p.worker != null && p.assignedMb > 0).toList();
+    final used =
+        nodes.where((p) => p.worker != null && p.assignedMb > 0).toList();
     if (used.isEmpty) {
       await LlamaCluster.clear();
       return 0;
@@ -417,14 +479,14 @@ class ClusterService extends GetxService {
     } on PlatformException catch (e) {
       throw Exception(
           '${e.message ?? 'A worker is unreachable'}. Turn on Worker on that '
-          'phone, or set this phone\'s Phone cluster to Off.');
+          'device, or set this device\'s Device cluster to Off.');
     }
     return used.length;
   }
 
   /// Fastest first, each up to its free memory, until the model is placed.
-  static void _fillFastestFirst(List<_Phone> phones, double needMb) {
-    final bySpeed = [...phones]..sort((a, b) => b.speed.compareTo(a.speed));
+  static void _fillFastestFirst(List<_Node> nodes, double needMb) {
+    final bySpeed = [...nodes]..sort((a, b) => b.speed.compareTo(a.speed));
     var left = needMb;
     for (final p in bySpeed) {
       p.assignedMb = math.min(p.capacityMb, left);
@@ -432,10 +494,10 @@ class ClusterService extends GetxService {
     }
   }
 
-  /// Shares in proportion to speed, capped at each phone's free memory
-  /// (what a capped phone can't take goes to the others).
-  static void _splitBySpeed(List<_Phone> phones, double needMb) {
-    var open = [...phones];
+  /// Shares in proportion to speed, capped at each device's free memory
+  /// (what a capped device can't take goes to the others).
+  static void _splitBySpeed(List<_Node> nodes, double needMb) {
+    var open = [...nodes];
     var left = needMb;
     while (open.isNotEmpty && left > 0.5) {
       final speedSum = open.fold<double>(0, (a, p) => a + p.speed);
@@ -458,57 +520,63 @@ class ClusterService extends GetxService {
     }
   }
 
-  /// LiteRT models can't be split across phones (the cluster is llama.cpp).
-  /// When this phone is a master with workers, asks before loading one here
+  /// LiteRT models can't be split across nodes (the cluster is llama.cpp).
+  /// When this device is a master with workers, asks before loading one here
   /// alone. True to go ahead.
   Future<bool> confirmLiteRtRunsHere(String model) async {
     final context = Get.context;
-    if (role != ClusterRole.master || workers.isEmpty || context == null) return true;
+    if (role != ClusterRole.master || workers.isEmpty || context == null) {
+      return true;
+    }
     final go = await showAppSheet<bool>(
       context,
       title: 'This model can\'t use your workers',
-      subtitle: '${model.replaceAll(RegExp(r'\.(litertlm|task)$'), '')} is a LiteRT '
-          'model, and only GGUF models can be shared across phones. It will run '
-          'on this phone only. To use your workers, load a GGUF model instead.',
+      subtitle:
+          '${model.replaceAll(RegExp(r'\.(litertlm|task)$'), '')} is a LiteRT '
+          'model, and only GGUF models can be shared across nodes. It will run '
+          'on this device only. To use your workers, load a GGUF model instead.',
       builder: (ctx) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PrimaryButton(
-            label: 'Load on this phone only',
+            label: 'Load on this device only',
             icon: Icons.smartphone_rounded,
             onPressed: () => Navigator.pop(ctx, true),
           ),
           const SizedBox(height: 10),
-          TonalButton.neutral(ctx, label: 'Cancel', onTap: () => Navigator.pop(ctx, false)),
+          TonalButton.neutral(ctx,
+              label: 'Cancel', onTap: () => Navigator.pop(ctx, false)),
         ],
       ),
     );
     return go == true;
   }
 
-  /// "Fits on this phone" sheet. True to share with workers anyway.
-  Future<bool> _askFitsHere(String model, double modelMb, int workerCount) async {
+  /// "Fits on this device" sheet. True to share with workers anyway.
+  Future<bool> _askFitsHere(
+      String model, double modelMb, int workerCount) async {
     final context = Get.context;
     if (context == null) return false;
     final share = await showAppSheet<bool>(
       context,
-      title: 'This model fits on this phone',
+      title: 'This model fits on this device',
       subtitle: '${model.replaceAll(RegExp(r'\.gguf$'), '')} needs about '
-          '${_gb(modelMb)}, and this phone has room for it. Running it here '
+          '${_gb(modelMb)}, and this device has room for it. Running it here '
           'is faster, because sharing sends every word over Wi-Fi. Share it '
-          'to free up memory on this phone.',
+          'to free up memory on this device.',
       builder: (ctx) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PrimaryButton(
-            label: 'Load on this phone only',
+            label: 'Load on this device only',
             icon: Icons.smartphone_rounded,
             onPressed: () => Navigator.pop(ctx, false),
           ),
           const SizedBox(height: 10),
           TonalButton.neutral(
             ctx,
-            label: 'Share with $workerCount worker${workerCount == 1 ? '' : 's'}',
+            label:
+                'Share with $workerCount worker${workerCount == 1 ? '' : 's'}',
             onTap: () => Navigator.pop(ctx, true),
           ),
         ],
@@ -518,7 +586,7 @@ class ClusterService extends GetxService {
   }
 
   /// Reads where the model actually went after a cluster load. Workers'
-  /// shares come from llama.cpp's per-device weight buffers; this phone's
+  /// shares come from llama.cpp's per-device weight buffers; this device's
   /// share is the rest of the file, because its own buffers overlap (the
   /// mapped file and the CPU's repacked copy of the same weights).
   Future<void> refreshSplit(String modelPath) async {
@@ -528,14 +596,17 @@ class ClusterService extends GetxService {
       final open = b.name.indexOf('[');
       if (open < 0) continue;
       final endpoint = b.name.substring(open + 1, b.name.lastIndexOf(']'));
-      final name = workers.firstWhereOrNull((w) => w.endpoint == endpoint)?.model ?? endpoint;
+      final name =
+          workers.firstWhereOrNull((w) => w.endpoint == endpoint)?.model ??
+              endpoint;
       remote[name] = (remote[name] ?? 0) + b.mb;
     }
     final fileMb = await File(modelPath).length() / (1024 * 1024);
     final remoteMb = remote.values.fold<double>(0, (a, b) => a + b);
     split.assignAll([
-      ClusterShare(deviceName.isEmpty ? 'This phone' : deviceName,
-          math.max(0, fileMb - remoteMb), isThisPhone: true),
+      ClusterShare(deviceName.isEmpty ? 'This device' : deviceName,
+          math.max(0, fileMb - remoteMb),
+          isThisDevice: true),
       for (final e in remote.entries) ClusterShare(e.key, e.value),
     ]);
   }

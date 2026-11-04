@@ -104,7 +104,32 @@ The `InferenceService` exposes `supportsLocalInference` so the UI can hide local
 | -------- | --------------- | ---------- | ------------------------------- |
 | Android  | ✅ Yes          | ✅ Yes     | CPU offload via NEON; minSdk 28 |
 | iOS      | ✅ Yes          | ✅ Yes     | Metal GPU acceleration          |
+| macOS    | ❌ No           | ✅ Yes     | Device cluster worker (Metal/CPU) |
+| Windows  | ❌ No           | ✅ Yes     | Device cluster worker (CPU)     |
 | Web      | ❌ No           | ✅ Yes     | Cloud-only (local coming soon)  |
+
+### Device Cluster
+
+PrivateLM can spread one GGUF model across devices on the same Wi-Fi. An
+Android phone acts as the **master**: it runs the model, holds the chat
+context and sends layers to the workers. Phones, tablets, Macs and Windows PCs
+can join as **workers** and lend their memory and GPU/CPU to the master.
+
+1. On the Android master, open **Settings > Device cluster** and choose
+   **Master**.
+2. On every other device, open **Settings > Device cluster**, choose
+   **Worker**, and leave PrivateLM open.
+3. On the master, scan the worker's QR code (or enter its IP address).
+4. Load a GGUF model on the master. Models larger than the master's free RAM
+   are split across the fastest workers first.
+
+All nodes must use the same version of PrivateLM so they speak the same ggml
+RPC protocol. Workers on iOS, macOS and Windows keep sharing until the app
+closes because ggml's RPC server cannot be stopped in-process.
+
+macOS and Windows are worker-only: they do not run local GGUF inference yet.
+On Windows, allow inbound TCP port `50052` through Windows Firewall so the
+master can reach the worker.
 
 ### iOS / iPad (Installation via AltServer)
 The iOS/iPad release is distributed as a sideloadable IPA file. Due to the RAM requirements for local models, iPad is the recommended iOS target, but it can be installed on iPhones.
@@ -167,6 +192,36 @@ cd ios
 pod install
 flutter build ios
 ```
+
+### macOS (cluster worker)
+
+macOS links only the ggml libraries (CPU, Metal and RPC), not llama.cpp, so
+build those once before the first macOS build and again after updating
+llama.cpp:
+
+```bash
+local_plugins/llama_flutter_android/scripts/build_ggml_macos.sh
+flutter pub get
+flutter build macos
+```
+
+The script needs Xcode (for the Metal compiler) and CMake. Pass
+`GGML_METAL=OFF` for a CPU-only build, or `ARCHS="arm64;x86_64"` for a
+universal library.
+
+### Windows (cluster worker)
+
+Install Visual Studio 2022 with the **Desktop development with C++** workload
+and CMake, then:
+
+```powershell
+flutter pub get
+flutter build windows
+```
+
+The Windows plugin builds ggml from the same vendored llama.cpp tree as the
+Android and iOS builds. Allow inbound TCP port `50052` through Windows
+Firewall.
 
 ### Web
 

@@ -14,8 +14,11 @@ Pod::Spec.new do |s|
 
   # llama.cpp (CPU, Metal, RPC) prebuilt from the same tree as the Android
   # build by ../scripts/build_llama_ios.sh, so both platforms run the same
-  # engine and can join one phone cluster. Device (arm64) only.
-  s.source_files = 'Classes/**/*.{swift,h,m,mm}'
+  # engine and can join one device cluster. Device (arm64) only.
+  #
+  # The cluster worker/channel live in ../apple/Classes because macOS uses
+  # the same code with AppKit instead of UIKit.
+  s.source_files = 'Classes/**/*.{swift,h,m,mm}', '../apple/Classes/**/*.{swift,h,m,mm}'
   s.vendored_libraries = 'llama_ios/lib/libllama_ios.a'
   s.preserve_paths = 'llama_ios/**/*'
 

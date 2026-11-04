@@ -1,0 +1,3 @@
+# Built by scripts/build_ggml_macos.sh; not distributed in the repo.
+lib/
+include/

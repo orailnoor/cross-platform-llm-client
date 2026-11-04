@@ -2,11 +2,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Phone cluster worker on iOS: serves this device's GPU (Metal) to a
-/// master phone over llama.cpp's RPC protocol. Mirrors the Android worker
-/// (ClusterWorkerService / jni_wrapper.cpp).
+/// Device cluster worker on Apple platforms: serves this device's GPU
+/// (Metal) or CPU to a master over llama.cpp's RPC protocol. Mirrors the
+/// Android worker (ClusterWorkerService / jni_wrapper.cpp).
 ///
-/// ggml's RPC server can't be stopped, and iOS has no separate worker
+/// ggml's RPC server can't be stopped, and iOS/macOS have no separate worker
 /// process to end, so once started it runs until the app closes.
 @interface LlamaClusterWorker : NSObject
 

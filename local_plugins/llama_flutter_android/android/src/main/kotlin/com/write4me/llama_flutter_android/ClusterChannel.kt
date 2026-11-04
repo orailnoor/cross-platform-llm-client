@@ -26,7 +26,7 @@ import java.net.Socket
 import kotlin.coroutines.resume
 
 /**
- * Method channel for the phone cluster: run this phone as a worker, find
+ * Method channel for the device cluster: run this device as a worker, find
  * workers on the local network, and choose which ones the next model load
  * uses. Kept apart from the Pigeon-generated LlamaHostApi.
  */

@@ -653,7 +653,7 @@ packages:
       path: "local_plugins/llama_flutter_android"
       relative: true
     source: path
-    version: "0.3.0"
+    version: "0.3.1"
   logging:
     dependency: transitive
     description:

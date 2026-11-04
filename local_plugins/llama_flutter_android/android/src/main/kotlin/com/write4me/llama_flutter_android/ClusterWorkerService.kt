@@ -231,7 +231,7 @@ class ClusterWorkerService : Service() {
 
     private fun buildNotification(text: String) = NotificationCompat.Builder(this, ensureChannel())
         .setSmallIcon(android.R.drawable.ic_dialog_info)
-        .setContentTitle("Phone cluster: worker")
+        .setContentTitle("Device cluster: worker")
         .setContentText(text)
         .setPriority(NotificationCompat.PRIORITY_LOW)
         .setOngoing(true)
@@ -249,7 +249,7 @@ class ClusterWorkerService : Service() {
     private fun ensureChannel(): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Phone cluster worker", NotificationManager.IMPORTANCE_LOW
+                CHANNEL_ID, "Device cluster worker", NotificationManager.IMPORTANCE_LOW
             ).apply { setSound(null, null) }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }

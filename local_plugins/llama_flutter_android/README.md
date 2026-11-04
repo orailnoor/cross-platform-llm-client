@@ -3,11 +3,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com/)
 
-Run GGUF models on Android with [llama.cpp](https://github.com/ggerganov/llama.cpp) - A simple, MIT-licensed Flutter plugin.
+Run GGUF models on Android/iOS with [llama.cpp](https://github.com/ggerganov/llama.cpp), and lend macOS/Windows devices to a PrivateLM cluster - A simple, MIT-licensed Flutter plugin.
 
 ## Features
 
-- **Android Only** - Optimized specifically for Android
+- **Android & iOS inference** - Optimized for local models on phones and tablets
 - **Simple API** - Easy-to-use Dart interface with Pigeon type safety
 - **Token Streaming** - Real-time token generation with EventChannel
 - **Stop Generation** - Cancel text generation mid-process on Android devices
@@ -19,6 +19,22 @@ Run GGUF models on Android with [llama.cpp](https://github.com/ggerganov/llama.c
 - **Latest llama.cpp** - Built on the September 24, 2026 llama.cpp release (b11157)
 - **Vision models** - GGUF multimodal models via llama.cpp `mtmd` (`mmprojPath` + `imagePath`)
 - **ARM64 Optimized** - NEON and dot product optimizations enabled
+
+## Device cluster workers
+
+The plugin also exposes llama.cpp's ggml RPC server as a device-cluster
+worker. An Android PrivateLM master can spread a GGUF model across Android,
+iOS, macOS and Windows workers on the same Wi-Fi:
+
+- **Android/iOS** keep their full local-inference API and can also be workers.
+- **macOS** links only ggml (CPU, Metal and RPC); build the static library
+  with `scripts/build_ggml_macos.sh` before the first build.
+- **Windows** links only ggml (CPU and RPC) and builds it from the vendored
+  llama.cpp tree with CMake.
+
+macOS and Windows are worker-only: they do not run local GGUF inference yet,
+and their worker keeps running until the app closes because ggml's RPC server
+has no stop API.
 
 ## Requirements
 

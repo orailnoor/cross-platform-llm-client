@@ -14,6 +14,7 @@ import firebase_messaging
 import flutter_inappwebview_macos
 import flutter_local_notifications
 import gal
+import llama_flutter_android
 import mobile_scanner
 import package_info_plus
 import share_plus
@@ -29,6 +30,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   InAppWebViewFlutterPlugin.register(with: registry.registrar(forPlugin: "InAppWebViewFlutterPlugin"))
   FlutterLocalNotificationsPlugin.register(with: registry.registrar(forPlugin: "FlutterLocalNotificationsPlugin"))
   GalPlugin.register(with: registry.registrar(forPlugin: "GalPlugin"))
+  LlamaClusterPlugin.register(with: registry.registrar(forPlugin: "LlamaClusterPlugin"))
   MobileScannerPlugin.register(with: registry.registrar(forPlugin: "MobileScannerPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   SharePlusMacosPlugin.register(with: registry.registrar(forPlugin: "SharePlusMacosPlugin"))

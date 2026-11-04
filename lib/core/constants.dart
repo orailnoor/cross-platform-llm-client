@@ -177,7 +177,7 @@ class AppConstants {
           'https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ2_M.gguf',
       'size': '10.0 GB',
       'description':
-          'Google Gemma 4 MoE, 4B active — too big for one phone: run it as a Phone cluster master with workers (~11 GB free across devices)',
+          'Google Gemma 4 MoE, 4B active — too big for one phone: run it as a Device cluster master with workers (~11 GB free across devices)',
       'template': 'gemma',
     },
     {
