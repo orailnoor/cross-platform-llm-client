@@ -12,7 +12,7 @@ function Invoke-Worker([string[]]$Arguments) {
 }
 function Assert-Reject([string[]]$Arguments) {
     try {
-        Invoke-Worker $Arguments
+        Invoke-Worker -Arguments $Arguments
         throw "Expected rejection: $Arguments"
     } catch {
         if ($_.Exception.Message -like "Expected rejection:*") { throw }
