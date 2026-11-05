@@ -24,18 +24,18 @@ static std::mutex g_peer_mutex;
 static std::string g_peer;
 
 // The RPC server reports connections through ggml's logger ("RPC client
-// connected: <ip>" / "RPC client disconnected", a PrivateLM patch).
+// connected: <ip>", a PrivateLM patch). It only ever sees the PLMC relay on
+// loopback; the real master comes from +setRelayPeer: instead.
 static void clusterLog(ggml_log_level level, const char* text, void*) {
     if (!text) return;
     static const char kConnected[] = "RPC client connected: ";
     if (std::strncmp(text, kConnected, sizeof(kConnected) - 1) == 0) {
         std::string peer(text + sizeof(kConnected) - 1);
         while (!peer.empty() && isspace((unsigned char)peer.back())) peer.pop_back();
-        std::lock_guard<std::mutex> lock(g_peer_mutex);
-        g_peer = peer;
-    } else if (std::strncmp(text, "RPC client disconnected", 23) == 0) {
-        std::lock_guard<std::mutex> lock(g_peer_mutex);
-        g_peer.clear();
+        if (peer.rfind("127.", 0) != 0) {
+            std::lock_guard<std::mutex> lock(g_peer_mutex);
+            g_peer = peer;
+        }
     }
     if (level >= GGML_LOG_LEVEL_INFO && level != GGML_LOG_LEVEL_CONT) {
         NSLog(@"[ggml] %s", text);
@@ -93,7 +93,8 @@ static std::string currentPeer() {
 
     [[NSFileManager defaultManager] createDirectoryAtPath:cacheDir
                               withIntermediateDirectories:YES attributes:nil error:nil];
-    std::string endpoint = "0.0.0.0:" + std::to_string(port);
+    // Loopback only: the network reaches it through PlmcWorkerRelay.
+    std::string endpoint = "127.0.0.1:" + std::to_string(port);
     std::string cache = cacheDir.UTF8String;
     const size_t n_threads = (size_t)std::max(1, threads);
     LOGI(@"Worker on %s using %s, cache %s", endpoint.c_str(), ggml_backend_dev_name(dev), cache.c_str());
@@ -121,6 +122,11 @@ static std::string currentPeer() {
 + (nullable NSString*)lastError {
     std::lock_guard<std::mutex> lock(g_error_mutex);
     return g_error.empty() ? nil : [NSString stringWithUTF8String:g_error.c_str()];
+}
+
++ (void)setRelayPeer:(nullable NSString*)peer {
+    std::lock_guard<std::mutex> lock(g_peer_mutex);
+    g_peer = peer ? peer.UTF8String : "";
 }
 
 + (nullable NSString*)connectedPeer {

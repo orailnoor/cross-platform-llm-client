@@ -10,8 +10,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// process to end, so once started it runs until the app closes.
 @interface LlamaClusterWorker : NSObject
 
-/// Starts serving on 0.0.0.0:`port` in a background thread. Returns nil on
-/// success, or why it couldn't start.
+/// Starts serving on 127.0.0.1:`port` (loopback only; masters reach it
+/// through PlmcWorkerRelay) in a background thread. Returns nil on success,
+/// or why it couldn't start.
 + (nullable NSString*)startOnPort:(int)port
                           threads:(int)threads
                          cacheDir:(NSString*)cacheDir;
@@ -23,6 +24,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Address of the master using this worker right now, or nil.
 + (nullable NSString*)connectedPeer;
+
+/// The master PlmcWorkerRelay let in (nil when none): the radio keep-awake
+/// pings it.
++ (void)setRelayPeer:(nullable NSString*)peer;
 
 /// Memory this app may still use before iOS ends it, in MB.
 + (long)availableMemoryMb;

@@ -205,7 +205,30 @@ class PlmcRelaysTest {
     fun interopWithSwiftWorker() {
         val target = System.getenv("PLMC_SWIFT_WORKER")
         assumeTrue(!target.isNullOrEmpty())
-        val port = master(key, target!!.substringAfterLast(':').toInt())
+        val workerPort = target!!.substringAfterLast(':').toInt()
+        val port = master(key, workerPort)
         roundTrip(port, "abc")
+
+        // Byte-exact across many frames and uneven writes.
+        val data = Random(7).nextBytes(4 shl 20)
+        val s = connect(port)
+        thread(isDaemon = true) {
+            val out = s.getOutputStream()
+            var pos = 0
+            while (pos < data.size) {
+                val n = minOf(1_300_001, data.size - pos)
+                out.write(data, pos, n)
+                pos += n
+            }
+            out.flush()
+        }
+        val back = ByteArray(data.size)
+        DataInputStream(s.getInputStream()).readFully(back)
+        assertArrayEquals(data, back)
+
+        // A master with the wrong key gets nothing through.
+        val stale = connect(master(otherKey, workerPort))
+        stale.getOutputStream().apply { write("x".toByteArray()); flush() }
+        assertClosed(stale)
     }
 }
