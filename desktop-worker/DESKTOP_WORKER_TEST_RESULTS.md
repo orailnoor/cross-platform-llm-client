@@ -7,7 +7,7 @@ Date: 2026-11-05. Repository source commit: `8a5f3b0c0ca8c2108b76ac9619fe5faf6a6
 - Laptop: ASUS TUF F15, Linux/Omarchy, NVIDIA RTX 4060 Laptop GPU with 8 GB VRAM, 16 GB system memory, CUDA toolkit 13.4.
 - Phone: Samsung Galaxy S24 Ultra, Android, PrivateLM Cluster Master. The installed app version was not read from the device.
 - Phone and laptop used the same Wi-Fi. The test worker bound to laptop address `192.168.0.10:50052`; UFW allowed that TCP port only from phone address `192.168.0.5` during the test.
-- Model: `LiquidAI/LFM2.5-1.2B-Instruct-GGUF`, Q4_K_M, 730,895,168 bytes, SHA-256 `b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5`. The model uses LFM Open License v1.0. No model file is part of this change.
+- Desktop benchmark file: `LiquidAI/LFM2.5-1.2B-Instruct-GGUF`, Q4_K_M, 730,895,168 bytes, SHA-256 `b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5`. The phone app selected the LFM2.5 1.2B Instruct Q4_K_M catalog model, but its file hash was not read from the device. The model uses LFM Open License v1.0. No model file is part of this change.
 - Prompt: `Write a 25-word story about a robot finding a garden. Use no introduction.`
 
 ## Phone and RPC result
@@ -29,7 +29,7 @@ The local laptop used the same LFM2.5 GGUF and prompt after one warm-up. Each me
 | 3 | 1,330.90 tokens/s | 265.95 tokens/s | 120.32 ms |
 | Mean | 1,332.17 tokens/s | 269.39 tokens/s | 118.80 ms |
 
-These are llama.cpp CLI timings, not app timings. The phone and CLI did not expose matching context, tokenization, or timing controls. In phone-only mode, the user reported `23.2` and later `9.5 tokens/s`, but said the output was gibberish. Do not use those phone-only rates as quality-valid baselines. The hybrid rate of `8.2 tokens/s` came from one successful run; later hybrid retries worked, but the user did not provide their rates. This is not a controlled phone benchmark. The app did not show a time-to-first-token measurement.
+These are llama.cpp CLI timings, not app timings. The phone and CLI did not expose matching context, tokenization, or timing controls. In phone-only mode, the user reported `23.2` and later `22.5 tokens/s`, but said the output was gibberish. Do not use those phone-only rates as quality-valid baselines. In hybrid mode, the user reported sensible output at `8.2` and later `9.5 tokens/s`. These app-reported rates are not controlled phone benchmarks. The app did not show a time-to-first-token measurement.
 
 The user ran the phone-only prompt two more times, but both runs failed with PrivateLM's `failed to decode prompt` error. Treat the single hybrid rate as an app-reported observation, not a stable average.
 
