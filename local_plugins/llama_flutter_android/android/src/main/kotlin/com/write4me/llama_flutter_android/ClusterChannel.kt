@@ -23,6 +23,7 @@ import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.Base64
 import kotlin.coroutines.resume
 
 /**
@@ -39,6 +40,8 @@ class ClusterChannel(
 
     /** Set by the plugin while the app has an activity. */
     var activity: Activity? = null
+
+    private val pairing = PairingStore(context)
 
     companion object {
         private const val TAG = "ClusterChannel"
@@ -140,7 +143,40 @@ class ClusterChannel(
                         val mb = line.substringAfter('\t', "").trim().toDoubleOrNull()
                         if (name.isEmpty() || mb == null) null else mapOf("name" to name, "mb" to mb)
                     }
-                result.success(buffers)
+                result.success(buffers.map { it + ("name" to MasterRelays.displayName(it["name"] as String)) })
+            }
+            "workerPairingKey" -> scope.launch(Dispatchers.IO) {
+                val key = Base64.getUrlEncoder().withoutPadding().encodeToString(pairing.workerSecret())
+                withContext(Dispatchers.Main) { result.success(key) }
+            }
+            "resetPairing" -> scope.launch(Dispatchers.IO) {
+                pairing.resetWorkerSecret()
+                withContext(Dispatchers.Main) {
+                    // The worker reads the new secret per connection; this
+                    // closes the connections made with the old one.
+                    if (isWorkerRunning()) {
+                        context.startService(Intent(context, ClusterWorkerService::class.java)
+                            .setAction(ClusterWorkerService.ACTION_RESET_PAIRING))
+                    }
+                    result.success(null)
+                }
+            }
+            "pairWorker" -> scope.launch(Dispatchers.IO) {
+                val id = call.argument<String>("id").orEmpty()
+                val key = runCatching { Base64.getUrlDecoder().decode(call.argument<String>("key").orEmpty()) }
+                    .getOrNull()
+                withContext(Dispatchers.Main) {
+                    if (id.isEmpty() || key == null || key.size != PairingStore.SECRET_LEN) {
+                        result.error("BAD_KEY", "That isn't a PrivateLM worker code", null)
+                        return@withContext
+                    }
+                    withContext(Dispatchers.IO) { pairing.setMasterKey(id, key) }
+                    result.success(null)
+                }
+            }
+            "forgetWorker" -> scope.launch(Dispatchers.IO) {
+                call.argument<String>("id")?.takeIf { it.isNotEmpty() }?.let { pairing.removeMasterKey(it) }
+                withContext(Dispatchers.Main) { result.success(null) }
             }
             "discover" -> scope.launch {
                 val found = try {
@@ -153,23 +189,44 @@ class ClusterChannel(
                 withContext(Dispatchers.Main) { result.success(found) }
             }
             "probe" -> scope.launch {
-                val ok = probe(call.argument<String>("endpoint") ?: "", 2000)
-                withContext(Dispatchers.Main) { result.success(ok) }
+                val outcome = probe(call.argument<String>("endpoint") ?: "", call.argument<String>("id"), 2000)
+                withContext(Dispatchers.Main) { result.success(outcome) }
             }
             "setCluster" -> scope.launch {
                 val endpoints = call.argument<List<String>>("endpoints") ?: emptyList()
+                val ids = call.argument<List<String>>("ids") ?: emptyList()
                 val weights = call.argument<List<Double>>("weights") ?: emptyList()
                 val localWeight = call.argument<Double>("localWeight") ?: 1.0
                 // llama.cpp aborts the whole app on an unreachable worker, so
-                // refuse the cluster unless every worker answers right now.
-                val unreachable = endpoints.filterNot { probe(it, 2000) }
-                withContext(Dispatchers.Main) {
-                    if (unreachable.isNotEmpty()) {
-                        result.error("UNREACHABLE", "Can't reach ${unreachable.joinToString()}", null)
-                        return@withContext
+                // refuse the cluster unless every worker answers (and proves
+                // it holds its pairing key) right now.
+                for ((i, endpoint) in endpoints.withIndex()) {
+                    val error = when (probe(endpoint, ids.getOrNull(i), 2000)) {
+                        "ok" -> continue
+                        "unpaired" -> "UNPAIRED" to "Scan $endpoint's code again"
+                        "rejected" -> "REJECTED" to "$endpoint was reset"
+                        else -> "UNREACHABLE" to "Can't reach $endpoint"
                     }
+                    withContext(Dispatchers.Main) { result.error(error.first, error.second, null) }
+                    return@launch
+                }
+                val targets = endpoints.mapIndexed { i, endpoint ->
+                    RelayTarget(
+                        endpoint.substringBeforeLast(':'),
+                        endpoint.substringAfterLast(':').toInt(),
+                        pairing.masterKey(ids[i])!!,
+                    )
+                }
+                // llama.cpp talks to local relays, which carry it to the workers.
+                val local = if (targets.isEmpty()) {
+                    MasterRelays.clear()
+                    emptyList()
+                } else {
+                    MasterRelays.use(targets) { Log.i(TAG, it) }
+                }
+                withContext(Dispatchers.Main) {
                     ClusterNative.nativeSetCluster(
-                        endpoints.toTypedArray(),
+                        local.toTypedArray(),
                         FloatArray(endpoints.size) { weights.getOrNull(it)?.toFloat() ?: 1f },
                         localWeight.toFloat()
                     )
@@ -205,6 +262,7 @@ class ClusterChannel(
     }
 
     fun dispose() {
+        MasterRelays.clear()
         runCatching { context.unbindService(workerPriority) }
         setLowLatencyWifi(false)
         channel.setMethodCallHandler(null)
@@ -221,14 +279,26 @@ class ClusterChannel(
         return am.runningAppProcesses?.any { it.processName == name } == true
     }
 
-    private suspend fun probe(endpoint: String, timeoutMs: Int): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Whether the worker at [endpoint] answers and holds the key paired for
+     * [id]: "ok", "unpaired" (no key here), "rejected" (the worker was reset)
+     * or "unreachable".
+     */
+    private suspend fun probe(endpoint: String, id: String?, timeoutMs: Int): String = withContext(Dispatchers.IO) {
+        val key = id?.takeIf { it.isNotEmpty() }?.let { pairing.masterKey(it) }
+            ?: return@withContext "unpaired"
         val host = endpoint.substringBeforeLast(':')
-        val port = endpoint.substringAfterLast(':').toIntOrNull() ?: return@withContext false
+        val port = endpoint.substringAfterLast(':').toIntOrNull() ?: return@withContext "unreachable"
         try {
-            Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs) }
-            true
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), timeoutMs)
+                PlmcHandshake.client(socket, key)
+            }
+            "ok"
+        } catch (e: PlmcAuthException) {
+            "rejected"
         } catch (e: Exception) {
-            false
+            "unreachable"
         }
     }
 
