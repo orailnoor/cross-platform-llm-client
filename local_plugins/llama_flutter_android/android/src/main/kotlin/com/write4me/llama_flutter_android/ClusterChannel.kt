@@ -189,7 +189,10 @@ class ClusterChannel(
                 withContext(Dispatchers.Main) { result.success(found) }
             }
             "probe" -> scope.launch {
-                val outcome = probe(call.argument<String>("endpoint") ?: "", call.argument<String>("id"), 2000)
+                val candidate = call.argument<String>("key")?.let {
+                    runCatching { Base64.getUrlDecoder().decode(it) }.getOrNull()
+                }
+                val outcome = probe(call.argument<String>("endpoint") ?: "", call.argument<String>("id"), 2000, candidate)
                 withContext(Dispatchers.Main) { result.success(outcome) }
             }
             "setCluster" -> scope.launch {
@@ -281,11 +284,17 @@ class ClusterChannel(
 
     /**
      * Whether the worker at [endpoint] answers and holds the key paired for
-     * [id]: "ok", "unpaired" (no key here), "rejected" (the worker was reset)
-     * or "unreachable".
+     * [id] (or [candidate], a scanned key not stored yet): "ok", "unpaired"
+     * (no key here), "rejected" (the worker was reset) or "unreachable".
      */
-    private suspend fun probe(endpoint: String, id: String?, timeoutMs: Int): String = withContext(Dispatchers.IO) {
-        val key = id?.takeIf { it.isNotEmpty() }?.let { pairing.masterKey(it) }
+    private suspend fun probe(
+        endpoint: String,
+        id: String?,
+        timeoutMs: Int,
+        candidate: ByteArray? = null,
+    ): String = withContext(Dispatchers.IO) {
+        val key = candidate?.takeIf { it.size == PairingStore.SECRET_LEN }
+            ?: id?.takeIf { it.isNotEmpty() }?.let { pairing.masterKey(it) }
             ?: return@withContext "unpaired"
         val host = endpoint.substringBeforeLast(':')
         val port = endpoint.substringAfterLast(':').toIntOrNull() ?: return@withContext "unreachable"

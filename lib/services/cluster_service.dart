@@ -258,18 +258,16 @@ class ClusterService extends GetxService {
       return e.message;
     }
     final w = scanned.worker;
-    final wasPaired = workers.any((x) => x.id == w.id && x.paired);
-    await LlamaCluster.pairWorker(w.id!, scanned.key);
-    final result = await LlamaCluster.probe(w);
+    // Check the scanned key before storing it: a stale code (an old
+    // screenshot) mustn't replace the key of a worker that works.
+    final result = await LlamaCluster.probe(w, key: scanned.key);
     if (result != ProbeResult.ok) {
-      // Keep the key of a worker that was already paired: a stale code can't
-      // unpair it, and it may just be away right now.
-      if (!wasPaired) await LlamaCluster.forgetWorker(w.id!);
       return result == ProbeResult.rejected
           ? rejectedMessage
           : 'Can\'t reach ${w.endpoint}. Check that the phone is a worker '
               'and on the same Wi-Fi.';
     }
+    await LlamaCluster.pairWorker(w.id!, scanned.key);
     workers.removeWhere((x) => x.endpoint == w.endpoint || x.id == w.id);
     workers.add(w);
     await _save();

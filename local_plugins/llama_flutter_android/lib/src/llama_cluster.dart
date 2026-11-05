@@ -189,10 +189,14 @@ class LlamaCluster {
     return (list ?? const []).map(ClusterWorker.fromMap).toList();
   }
 
-  /// Whether [worker] answers and holds the pairing key this phone has.
-  static Future<ProbeResult> probe(ClusterWorker worker) async {
-    final result = await _channel
-        .invokeMethod<Object>('probe', {'endpoint': worker.endpoint, 'id': worker.id});
+  /// Whether [worker] answers and holds the pairing key this phone has, or
+  /// [key] (base64url) to check a scanned key before storing it.
+  static Future<ProbeResult> probe(ClusterWorker worker, {String? key}) async {
+    final result = await _channel.invokeMethod<Object>('probe', {
+      'endpoint': worker.endpoint,
+      'id': worker.id,
+      if (key != null) 'key': key,
+    });
     return ProbeResult.values.firstWhere((r) => r.name == result,
         orElse: () => ProbeResult.unreachable);
   }
