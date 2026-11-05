@@ -6,7 +6,32 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
+
+/**
+ * Accepts on [server] until it's closed. A failed accept (e.g. out of file
+ * descriptors during a flood) or a thread that can't start drops that one
+ * connection; the listener keeps going.
+ */
+private fun acceptLoop(server: ServerSocket, name: String, handle: (Socket) -> Unit) {
+    thread(isDaemon = true, name = "$name-accept") {
+        while (!server.isClosed) {
+            val socket = try {
+                server.accept()
+            } catch (e: IOException) {
+                if (server.isClosed) break
+                Thread.sleep(50)
+                continue
+            }
+            try {
+                thread(isDaemon = true, name = "$name-conn") { handle(socket) }
+            } catch (e: Throwable) {
+                runCatching { socket.close() }
+            }
+        }
+    }
+}
 
 /**
  * Pipes [plain] and [session] into each other until either side ends, then
@@ -69,6 +94,12 @@ class WorkerRelay(
     private var server: ServerSocket? = null
     private val live: MutableSet<Socket> = ConcurrentHashMap.newKeySet()
     private val masters = ConcurrentHashMap<Socket, String>()
+    private val handshaking = AtomicInteger()
+
+    companion object {
+        /** Connections still in their handshake; more are closed at once. */
+        const val MAX_HANDSHAKING = 32
+    }
 
     /** The port actually listened on (useful when [publicPort] is 0). */
     val localPort: Int get() = server?.localPort ?: -1
@@ -82,12 +113,14 @@ class WorkerRelay(
         s.reuseAddress = true
         s.bind(InetSocketAddress(bindAddress, publicPort), 50)
         server = s
-        thread(isDaemon = true, name = "plmc-worker-accept") {
-            while (!s.isClosed) {
-                val client = runCatching { s.accept() }.getOrNull() ?: break
+        // Own thread per connection: a silent client can't hold up others.
+        acceptLoop(s, "plmc-worker") { client ->
+            if (handshaking.incrementAndGet() > MAX_HANDSHAKING) {
+                handshaking.decrementAndGet()
+                runCatching { client.close() }
+            } else {
                 live += client
-                // Own thread per connection: a silent client can't hold up others.
-                thread(isDaemon = true, name = "plmc-worker-conn") { serve(client) }
+                serve(client)
             }
         }
     }
@@ -96,11 +129,13 @@ class WorkerRelay(
         val from = client.inetAddress?.hostAddress ?: "?"
         val session = try {
             PlmcHandshake.server(client, keySupplier)
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             log("Refused connection from $from (${e.javaClass.simpleName})")
             live -= client
             runCatching { client.close() }
             return
+        } finally {
+            handshaking.decrementAndGet()
         }
         val upstream = try {
             Socket(InetAddress.getLoopbackAddress(), upstreamPort)
@@ -155,12 +190,9 @@ class MasterRelay(
         server?.let { return it.localPort }
         val s = ServerSocket(0, 50, InetAddress.getLoopbackAddress())
         server = s
-        thread(isDaemon = true, name = "plmc-master-accept") {
-            while (!s.isClosed) {
-                val local = runCatching { s.accept() }.getOrNull() ?: break
-                live += local
-                thread(isDaemon = true, name = "plmc-master-conn") { forward(local) }
-            }
+        acceptLoop(s, "plmc-master") { local ->
+            live += local
+            forward(local)
         }
         return s.localPort
     }

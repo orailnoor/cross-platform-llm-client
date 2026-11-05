@@ -8,6 +8,8 @@ import java.io.IOException
 import java.net.Socket
 import java.security.GeneralSecurityException
 import java.security.SecureRandom
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** The other side doesn't hold this worker's current secret (it was reset). */
 class PlmcAuthException(message: String) : IOException(message)
@@ -63,11 +65,37 @@ class PlmcSession internal constructor(
 
 object PlmcHandshake {
     private val random = SecureRandom()
+    private val deadlines = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "plmc-handshake-deadline").apply { isDaemon = true }
+    }
+
+    /**
+     * Runs [block] with [PlmcProtocol.HANDSHAKE_TIMEOUT_MS] for the whole
+     * handshake, not per read: a client dripping one byte at a time can't
+     * hold a connection open.
+     */
+    private fun <T> withDeadline(socket: Socket, block: () -> T): T {
+        val timer = deadlines.schedule({ runCatching { socket.close() } },
+            PlmcProtocol.HANDSHAKE_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+        val result = try {
+            block()
+        } catch (e: IOException) {
+            timer.cancel(false)
+            throw e
+        }
+        if (!timer.cancel(false)) {
+            runCatching { socket.close() }
+            throw IOException("PLMC handshake timed out")
+        }
+        return result
+    }
 
     private fun nonce() = ByteArray(PlmcProtocol.NONCE_LEN).also { random.nextBytes(it) }
 
     /** Master side: proves it holds [key] and checks that the worker does too. */
-    fun client(socket: Socket, key: ByteArray): PlmcSession {
+    fun client(socket: Socket, key: ByteArray): PlmcSession = withDeadline(socket) { clientHandshake(socket, key) }
+
+    private fun clientHandshake(socket: Socket, key: ByteArray): PlmcSession {
         socket.soTimeout = PlmcProtocol.HANDSHAKE_TIMEOUT_MS
         socket.tcpNoDelay = true
         val input = DataInputStream(BufferedInputStream(socket.getInputStream()))
@@ -97,7 +125,10 @@ object PlmcHandshake {
      * proves it holds the key [keySupplier] returns; null means no key yet.
      * The caller closes the socket on failure.
      */
-    fun server(socket: Socket, keySupplier: () -> ByteArray?): PlmcSession {
+    fun server(socket: Socket, keySupplier: () -> ByteArray?): PlmcSession =
+        withDeadline(socket) { serverHandshake(socket, keySupplier) }
+
+    private fun serverHandshake(socket: Socket, keySupplier: () -> ByteArray?): PlmcSession {
         socket.soTimeout = PlmcProtocol.HANDSHAKE_TIMEOUT_MS
         socket.tcpNoDelay = true
         val input = DataInputStream(BufferedInputStream(socket.getInputStream()))

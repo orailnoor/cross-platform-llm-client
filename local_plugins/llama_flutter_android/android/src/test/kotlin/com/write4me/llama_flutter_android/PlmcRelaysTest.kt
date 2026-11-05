@@ -143,6 +143,34 @@ class PlmcRelaysTest {
     }
 
     @Test
+    fun dripFeedingClientIsDroppedAfterTotalHandshakeDeadline() {
+        val drip = connect(worker.localPort)
+        val started = System.nanoTime()
+        val out = drip.getOutputStream()
+        // A valid hello, one byte a second: never trips a per-read timeout,
+        // but the 5 s budget is for the whole handshake.
+        val hello = PlmcProtocol.MAGIC + byteArrayOf(PlmcProtocol.VERSION) + ByteArray(PlmcProtocol.NONCE_LEN)
+        var closed = false
+        for (i in 0 until 12) {
+            try {
+                out.write(hello[i].toInt())
+                out.flush()
+            } catch (e: java.io.IOException) {
+                closed = true
+                break
+            }
+            drip.soTimeout = 1000
+            val r = try { drip.getInputStream().read() } catch (e: SocketTimeoutException) { -2 } catch (e: java.net.SocketException) { -1 }
+            if (r == -1) {
+                closed = true
+                break
+            }
+        }
+        val seconds = (System.nanoTime() - started) / 1e9
+        assertTrue("drip-feeding client still open after %.1fs".format(seconds), closed && seconds < 7.5)
+    }
+
+    @Test
     fun dropAllClosesLiveSessions() {
         val s = connect(master())
         s.getOutputStream().apply { write("x".toByteArray()); flush() }
