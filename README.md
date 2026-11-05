@@ -138,13 +138,41 @@ Here is how you can install the app using AltStore and AltServer:
 - Android SDK (API 26+)
 - JDK 17
 - NDK (bundled with Android SDK)
+- A recent `glslc` (shaderc) for the Vulkan shaders: the NDK's own `glslc` is too old to compile them
 
 ### Android
+
+#### macOS setup (once)
+
+```bash
+# Vulkan shader compiler, newer than the NDK's (needed for cooperative-matrix shaders)
+brew install shaderc
+
+# JDK 17: Gradle 8.14 doesn't run on newer JDKs (e.g. 25)
+brew install openjdk@17
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+
+# stable-diffusion.cpp is a git submodule
+git submodule update --init --recursive
+```
+
+If an earlier build failed with `'coopmat' : undeclared identifier`, CMake has
+cached the NDK's `glslc`. Clear the cache after installing shaderc:
+
+```bash
+rm -rf local_plugins/llama_flutter_android/android/.cxx
+```
+
+#### Build
 
 ```bash
 flutter pub get
 flutter build apk --debug
 ```
+
+The first build compiles llama.cpp, its Vulkan shaders and stable-diffusion.cpp
+and takes a while. Add `--target-platform android-arm64` to build for 64-bit
+phones only, which is faster.
 
 Release APKs require a stable signing key. Copy
 `android/key.properties.example` to `android/key.properties`, fill in the
