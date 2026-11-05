@@ -5,35 +5,43 @@ Date: 2026-11-05. Repository source commit: `8a5f3b0c0ca8c2108b76ac9619fe5faf6a6
 ## Hardware and model
 
 - Laptop: ASUS TUF F15, Linux/Omarchy, NVIDIA RTX 4060 Laptop GPU with 8 GB VRAM, 16 GB system memory, CUDA toolkit 13.4.
-- Phone: Samsung Galaxy S24 Ultra, Android, PrivateLM Cluster Master. The installed app version was not read from the device.
-- Phone and laptop used the same Wi-Fi. The test worker bound to laptop address `192.168.0.10:50052`; UFW allowed that TCP port only from phone address `192.168.0.5` during the test.
+- Phone: Samsung Galaxy S24 Ultra, Android, PrivateLM Cluster Master. ADB package readback confirmed version `1.0.7` (`versionCode=7`), installed/updated 2026-11-05 00:39 local time.
+- Phone and laptop used the same Wi-Fi. The successful phone test initially used `192.168.0.5`, then `192.168.0.3` after the phone's address changed. UFW allowed only the phone address to reach laptop `192.168.0.10:50052` during those tests. The temporary rules were removed; the laptop currently has no RPC listener or RPC firewall exception.
 - Desktop benchmark file: `LiquidAI/LFM2.5-1.2B-Instruct-GGUF`, Q4_K_M, 730,895,168 bytes, SHA-256 `b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5`. The phone app selected the LFM2.5 1.2B Instruct Q4_K_M catalog model, but its file hash was not read from the device. The model uses LFM Open License v1.0. No model file is part of this change.
 - Prompt: `Write a 25-word story about a robot finding a garden. Use no introduction.`
 
 ## Phone and RPC result
 
-The phone accepted the worker address and generated a sensible answer with LFM2.5. The user reported an app rate of `8.2 tk/s` and a layer allocation of 83% phone / 17% laptop. The worker log showed a connection from `192.168.0.5`, remote buffer allocations, and repeated RPC `graph_compute` requests during phone generation. The RTX 4060 showed approximately 573 MiB VRAM use during an observed phone RPC session. During a later repeat check, the S24 used `192.168.0.3`; UFW initially blocked this new address. After a rule allowed only `.3` to reach `.10:50052`, the phone reconnected and the user confirmed hybrid generation worked.
+The phone master connected to the worker and generated a sensible answer with LFM2.5. The user reported app rates of `8.2` and later `9.5 tk/s`, with an 83% phone / 17% laptop allocation. The worker log showed a connection from the phone, remote buffer allocations, and repeated RPC `graph_compute` requests during phone generation. The RTX 4060 showed approximately 573 MiB VRAM use during an observed phone RPC session. When the phone changed to `192.168.0.3`, UFW initially blocked it; one narrow allow rule fixed the connection and was removed after testing.
 
-This proves that this phone and this desktop build exchanged compute requests and generated output. It does not establish that every PrivateLM release or every model is RPC-compatible. The app version and its timing method were not read from the phone.
+This proves that this phone and this desktop build exchanged compute requests and generated output. It does not establish that every PrivateLM release or every model is RPC-compatible. The app displayed tokens/s but did not expose time-to-first-token.
 
 The first app-listed Qwen model was LiteRT and could not be shared with cluster workers. It was not used for the phone test. A separately downloaded Apache-2.0 Qwen GGUF was used for an earlier laptop-to-local-RPC smoke test only.
 
-## Laptop-only measurement
+## Controlled desktop measurements
 
-The local laptop used the same LFM2.5 GGUF and prompt after one warm-up. Each measured CLI run used context 1024, 40 predicted tokens, temperature 0, seed 42, 8 CPU threads, and all model layers on CUDA. The prompt tokenization and generation count were 27 and 33 tokens.
+The local laptop used the exact same LFM2.5 GGUF and prompt for direct CUDA and loopback RPC runs. Each measured run used context 1024, maximum 40 predicted tokens, temperature 0, top-p 0.9, top-k 40, min-p 0.05, repeat penalty 1.1, repeat-last-n 64, seed 42, 8 CPU threads, and all model layers on CUDA/RPC. The local file was 730,895,168 bytes with SHA-256 `b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5`. The phone's app-private copy could not be read by ADB because the installed package is not debuggable; the same phone-file checksum remains unverified.
 
-| Run | Prompt processing | Generation | Eval time |
-|---|---:|---:|---:|
-| 1 | 1,373.98 tokens/s | 272.99 tokens/s | 117.22 ms |
-| 2 | 1,291.62 tokens/s | 269.22 tokens/s | 118.86 ms |
-| 3 | 1,330.90 tokens/s | 265.95 tokens/s | 120.32 ms |
-| Mean | 1,332.17 tokens/s | 269.39 tokens/s | 118.80 ms |
+| Run | Direct CUDA generation |
+|---|---:|
+| 1 | 225.8 tokens/s |
+| 2 | 251.2 tokens/s |
+| 3 | 223.6 tokens/s |
+| Mean | 233.5 tokens/s |
 
-These are llama.cpp CLI timings, not app timings. The phone and CLI did not expose matching context, tokenization, or timing controls. In phone-only mode, the user reported `23.2` and later `22.5 tokens/s`, but said the output was gibberish. Do not use those phone-only rates as quality-valid baselines. In hybrid mode, the user reported sensible output at `8.2` and later `9.5 tokens/s`. These app-reported rates are not controlled phone benchmarks. The app did not show a time-to-first-token measurement.
+Three loopback RPC runs with the same prompt and settings generated at `233.0`, `228.7`, and `221.7 tokens/s` (mean `227.8 tokens/s`), 2.4% below direct CUDA. The client hid its local CUDA device, assigned model layers to `RPC0`, and emitted remote `graph_compute` operations. The remote GPU had 7,764 MiB free at worker startup; the client reported 763 MiB allocated for the model, context, and compute buffers on RPC0 (694 MiB model, 12 MiB context, 57 MiB compute). This is a loopback comparison, not a Wi-Fi or phone benchmark. Both paths produced the same coherent 23-word answer, shorter than the prompt's requested 25 words.
+
+These llama.cpp CLI timings are not app timings. Prompt prefill rate was reported by the CLI, but time-to-first-token was not measured. The phone and CLI do not expose matching context, tokenization, or timing controls. In phone-only mode, the user reported `23.2` and later `22.5 tokens/s`, but said the output was gibberish; two more attempts failed with `failed to decode prompt`. Do not use those phone-only rates as quality-valid baselines. In hybrid mode, the user reported sensible output at `8.2` and later `9.5 tokens/s`. Those app-reported rates are not controlled phone benchmarks.
 
 The user ran the phone-only prompt two more times, but both runs failed with PrivateLM's `failed to decode prompt` error. Treat the single hybrid rate as an app-reported observation, not a stable average.
 
-The desktop launcher was also tested against the CUDA RPC server on loopback. With the same LFM2.5 file, prompt, and CLI settings, and with CUDA hidden from the client, three runs generated at `248.44`, `244.40`, and `247.35 tokens/s` through RPC. Mean generation was `246.73 tokens/s`, about 8.3% below the mean direct-CUDA rate. This is a local loopback comparison, not a Wi-Fi or phone benchmark.
+## Phone-only failure diagnosis
+
+- ADB confirmed PrivateLM `1.0.7`. The app-selected LFM2.5 GGUF resides in app-private storage. `run-as` is denied because the package is not debuggable, and no matching copy was found in shared Downloads. Its actual phone SHA-256 and byte size therefore remain unverified; the desktop copy's hash above is not proof of the phone copy.
+- Source defaults are temperature `0.7`, max output `1024`, and context `2048`; Android GGUF generation sends top-p `0.9`, top-k `40`, min-p `0.05`, repeat penalty `1.1`, and repeat-last-n `64`. The app passes a null chat template to its template manager; filename detection falls back to ChatML for LFM2.5. The user's persisted settings were not readable through the installed app's private storage, so these defaults are not claimed to be the live settings.
+- Source inspection shows standalone GGUF load may use the phone GPU, while adding cluster workers forces the phone's local GGUF portion to CPU. This makes the standalone GPU path a credible cause of the phone-only symptom, but no controlled CPU-safe phone run or matching live decode log was captured, so the cause is not confirmed. LFM2.5's ordinary text chat format is ChatML-compatible; the template fallback alone does not establish a template defect.
+- At the latest read-only ADB sample, the S24 had 2.6 GiB `MemAvailable`; the laptop had 4.3 GiB available system RAM and 7,863 MiB free GPU memory. The app's manually added worker has no capacity metadata and the current planner fallback is 2,000 MiB and 4.0 GB/s. The previously observed 83%/17% split is consistent with that conservative fallback, but a larger-model placement test is still required to establish its effect.
+- The requested Gemma 4 26B workload was not confirmed as fully downloaded or selected. No model larger than 1.2B was loaded on the phone/worker, and no result currently proves combined memory enabled a model that either device could not run alone.
 
 ## Commands and outcomes
 
