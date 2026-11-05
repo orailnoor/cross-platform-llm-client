@@ -14,10 +14,11 @@ import kotlin.concurrent.thread
  */
 private fun pump(plain: Socket, session: PlmcSession, onEnd: () -> Unit = {}) {
     plain.tcpNoDelay = true
+    val ended = java.util.concurrent.atomic.AtomicBoolean(false)
     val closeBoth = {
         runCatching { plain.close() }
         session.close()
-        onEnd()
+        if (ended.compareAndSet(false, true)) onEnd()
     }
     thread(isDaemon = true, name = "plmc-seal") {
         try {
@@ -62,6 +63,8 @@ class WorkerRelay(
     private val keySupplier: () -> ByteArray?,
     private val bindAddress: InetAddress = InetAddress.getByName("0.0.0.0"),
     private val log: (String) -> Unit = {},
+    /** Called with [peer] whenever it changes (the radio keep-awake pings it). */
+    private val onPeerChange: (String?) -> Unit = {},
 ) {
     private var server: ServerSocket? = null
     private val live: MutableSet<Socket> = ConcurrentHashMap.newKeySet()
@@ -110,10 +113,12 @@ class WorkerRelay(
         live += upstream
         masters[client] = from
         log("Master $from connected")
+        onPeerChange(peer)
         pump(upstream, session) {
             masters.remove(client)
             live -= client
             live -= upstream
+            onPeerChange(peer)
         }
     }
 
@@ -122,6 +127,7 @@ class WorkerRelay(
         live.forEach { runCatching { it.close() } }
         live.clear()
         masters.clear()
+        onPeerChange(null)
     }
 
     fun stop() {

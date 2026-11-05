@@ -174,6 +174,22 @@ class PlmcRelaysTest {
     }
 
     @Test
+    fun peerChangesAreReportedOnConnectAndDisconnect() {
+        val changes = java.util.concurrent.LinkedBlockingQueue<String>()
+        val relay = WorkerRelay(0, echo.localPort, { key }, loopback, onPeerChange = { changes.put(it ?: "none") })
+        relay.start()
+        cleanup += { relay.stop() }
+
+        val s = connect(master(port = relay.localPort))
+        s.getOutputStream().apply { write("x".toByteArray()); flush() }
+        s.getInputStream().read()
+        assertEquals("127.0.0.1", changes.poll(2, java.util.concurrent.TimeUnit.SECONDS))
+
+        s.close()
+        assertEquals("none", changes.poll(2, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
     fun masterRelaysMapLocalEndpointsBackToWorkers() {
         val endpoints = MasterRelays.use(listOf(RelayTarget("127.0.0.1", worker.localPort, key)))
         cleanup += { MasterRelays.clear() }

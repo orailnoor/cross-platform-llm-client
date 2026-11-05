@@ -116,7 +116,11 @@ class ClusterWorkerService : Service() {
             bandwidth = ClusterNative.nativeMemBandwidth(threads)
             Log.i(TAG, "Worker: $threads threads, ${ramMb} MB free, %.1f GB/s".format(bandwidth))
             val store = PairingStore(this)
-            val relay = WorkerRelay(port, RPC_PORT, { store.workerSecret() }, log = { Log.i(TAG, it) })
+            val relay = WorkerRelay(
+                port, RPC_PORT, { store.workerSecret() },
+                log = { Log.i(TAG, it) },
+                onPeerChange = { ClusterNative.nativeSetWorkerPeer(it) },
+            )
             try {
                 relay.start()
             } catch (e: java.io.IOException) {
