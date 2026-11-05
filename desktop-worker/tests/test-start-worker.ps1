@@ -7,26 +7,34 @@ $capture = Join-Path $temp "args.txt"
 Set-Content -LiteralPath $stub -Value '$args | Set-Content -LiteralPath $env:CAPTURE_ARGS'
 $env:CAPTURE_ARGS = $capture
 
-function Invoke-Worker([string[]]$Arguments) {
-    & (Join-Path $root "scripts\start-worker.ps1") -ServerPath $stub @Arguments
+function Invoke-Worker {
+    param([string[]]$WorkerArguments)
+    $launcher = Join-Path $root "scripts\start-worker.ps1"
+    $pwsh = (Get-Command pwsh).Source
+    $arguments = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$launcher`"",
+        "-ServerPath", "`"$stub`""
+    ) + $WorkerArguments
+    $process = Start-Process -FilePath $pwsh -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+    return $process.ExitCode
 }
 function Assert-Reject([string[]]$Arguments) {
-    try {
-        Invoke-Worker -Arguments $Arguments
+    $exitCode = Invoke-Worker -WorkerArguments $Arguments
+    if ($exitCode -eq 0) {
         throw "Expected rejection: $Arguments"
-    } catch {
-        if ($_.Exception.Message -like "Expected rejection:*") { throw }
     }
 }
 
 try {
-    Invoke-Worker @()
+    if ((Invoke-Worker -WorkerArguments @()) -ne 0) { throw "Default launch failed" }
     $captured = Get-Content -LiteralPath $capture
     if ($captured -notcontains "127.0.0.1" -or $captured -notcontains "50052") {
         throw "Default launch arguments were incorrect: $captured"
     }
     Assert-Reject @("-HostAddress", "192.168.0.10")
-    Invoke-Worker @("-AllowLan", "-HostAddress", "192.168.0.10", "-Device", "CUDA0")
+    if ((Invoke-Worker -WorkerArguments @("-AllowLan", "-HostAddress", "192.168.0.10", "-Device", "CUDA0")) -ne 0) {
+        throw "LAN launch failed"
+    }
     $captured = Get-Content -LiteralPath $capture
     if ($captured -notcontains "192.168.0.10" -or $captured -notcontains "CUDA0") {
         throw "LAN launch arguments were incorrect: $captured"
