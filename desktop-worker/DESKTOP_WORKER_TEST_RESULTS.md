@@ -12,7 +12,7 @@ Date: 2026-11-05. Repository source commit: `8a5f3b0c0ca8c2108b76ac9619fe5faf6a6
 
 ## Phone and RPC result
 
-The phone accepted the worker address and generated an answer with LFM2.5. The user reported an app rate of `8.2 tk/s` and a layer allocation of 83% phone / 17% laptop. The worker log showed a connection from `192.168.0.5`, remote buffer allocations, and repeated RPC `graph_compute` requests during phone generation. The RTX 4060 showed approximately 573 MiB VRAM use during an observed phone RPC session.
+The phone accepted the worker address and generated a sensible answer with LFM2.5. The user reported an app rate of `8.2 tk/s` and a layer allocation of 83% phone / 17% laptop. The worker log showed a connection from `192.168.0.5`, remote buffer allocations, and repeated RPC `graph_compute` requests during phone generation. The RTX 4060 showed approximately 573 MiB VRAM use during an observed phone RPC session. During a later repeat check, the S24 used `192.168.0.3`; UFW initially blocked this new address. After a rule allowed only `.3` to reach `.10:50052`, the phone reconnected and the user confirmed hybrid generation worked.
 
 This proves that this phone and this desktop build exchanged compute requests and generated output. It does not establish that every PrivateLM release or every model is RPC-compatible. The app version and its timing method were not read from the phone.
 
@@ -29,9 +29,9 @@ The local laptop used the same LFM2.5 GGUF and prompt after one warm-up. Each me
 | 3 | 1,330.90 tokens/s | 265.95 tokens/s | 120.32 ms |
 | Mean | 1,332.17 tokens/s | 269.39 tokens/s | 118.80 ms |
 
-These are llama.cpp CLI timings, not app timings. The phone and CLI did not expose matching context, tokenization, or timing controls. In a separate phone-only run, the user reported `23.2 tokens/s`; they noted that the answer was random. The single hybrid rate of `8.2 tokens/s` was about 2.8 times slower than that single phone-only rate. This is an app-reported observation, not a controlled benchmark. Neither phone run exposed time to first token, and neither rate was repeated three times.
+These are llama.cpp CLI timings, not app timings. The phone and CLI did not expose matching context, tokenization, or timing controls. In phone-only mode, the user reported `23.2` and later `9.5 tokens/s`, but said the output was gibberish. Do not use those phone-only rates as quality-valid baselines. The hybrid rate of `8.2 tokens/s` came from one successful run; later hybrid retries worked, but the user did not provide their rates. This is not a controlled phone benchmark. The app did not show a time-to-first-token measurement.
 
-The user ran the phone-only prompt two more times, but both runs failed with PrivateLM's `failed to decode prompt` error. Treat the phone-only and phone-plus-desktop rates as one successful observation each, not stable averages.
+The user ran the phone-only prompt two more times, but both runs failed with PrivateLM's `failed to decode prompt` error. Treat the single hybrid rate as an app-reported observation, not a stable average.
 
 The desktop launcher was also tested against the CUDA RPC server on loopback. With the same LFM2.5 file, prompt, and CLI settings, and with CUDA hidden from the client, three runs generated at `248.44`, `244.40`, and `247.35 tokens/s` through RPC. Mean generation was `246.73 tokens/s`, about 8.3% below the mean direct-CUDA rate. This is a local loopback comparison, not a Wi-Fi or phone benchmark.
 
@@ -43,10 +43,11 @@ The desktop launcher was also tested against the CUDA RPC server on loopback. Wi
 - A reachable HTTP server was also given to `llama-cli` as an RPC endpoint. The client did not complete an RPC handshake or generate output; it hung until stopped with SIGTERM (exit 143). This confirms that a TCP connection alone cannot validate an RPC worker. The PrivateLM app's successful Add action was treated as a TCP check only.
 - `bash desktop-worker/tests/test-start-worker.sh` passed. The test uses a stub server and covers safe default bind, LAN opt-in, wildcard/public/link-local/CGNAT/invalid addresses, ports, thread counts, and device-name validation.
 - `bash desktop-worker/scripts/build-worker.sh --source ../llama.cpp-b11157 --build-dir ../build-worker-cpu` passed. It built the pinned CPU RPC server target. The initial run failed because this upstream revision creates the RPC server target only when `LLAMA_BUILD_TOOLS=ON`; the script now enables tools while still building only `ggml-rpc-server`.
+- GitHub Actions run `41998963409` passed on Ubuntu CPU, macOS Metal, and Windows CPU. Linux and macOS launcher tests passed. Windows built the server and passed the PowerShell launcher tests. An earlier Windows test run exposed a test-harness argument-binding error; the test now launches the worker script in a child PowerShell process.
 - Full Flutter tests: 30 passed; 9 unrelated `openai_server_service_test.dart` cases failed because the pre-existing local service occupied port 18765 (`EADDRINUSE`). The other 7 test files passed (30 tests).
 - `flutter analyze` exited 1 on two pre-existing diagnostics: an unawaited Future at `lib/services/download_native.dart:152` and deprecated `axisAlignment` at `lib/widgets/thought_disclosure.dart:170`.
 - `flutter build apk --debug --no-pub` did not reach app compilation: Gradle 8.14.3 could not start under the installed Java 27 toolchain; Gradle distribution access also failed TLS in the wrapper. The desktop-worker change does not alter Flutter or Android source.
-- Windows PowerShell and macOS worker paths are provided but were not run on those operating systems. The workflow in `.github/workflows/desktop-worker.yml` builds Linux CPU, macOS Metal, and Windows CPU variants on GitHub Actions. Those hosted results are pending.
+- The GitHub Windows and macOS checks prove builds and launcher validation only. No Windows/macOS phone inference or runtime worker session was tested.
 
 ## Limits
 
