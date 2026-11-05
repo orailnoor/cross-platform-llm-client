@@ -20,6 +20,7 @@ _Generated on pixel 6 with 20 step_
 - **Persistent Sessions** — All chats and settings are stored locally via Hive. Nothing leaves your device unless you explicitly choose cloud mode.
 - **Background Services** — Firebase Cloud Messaging integration for push updates and background task handling.
 - **Smart Auto-Configuration** — On first launch, the app detects your device's RAM and recommends optimal context size and token limits automatically.
+- **Phone Cluster** — Run a GGUF model too big for one phone across several phones and iPads on the same Wi-Fi. Workers are added only by scanning their QR code, which carries a pairing key; every connection proves it holds that key and all traffic between phones is encrypted, so a worker is safe on public Wi-Fi. **Reset pairing** on a worker unpairs every master at once.
 - **Task Management (in development)** — A task view for structured, multi-step AI workflows is being built. It is not available in the app yet.
 
 ---
