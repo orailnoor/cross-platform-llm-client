@@ -29,6 +29,9 @@ object ClusterNative {
     /** Worker: the connected master's address, or null. */
     external fun nativeWorkerPeer(): String?
 
+    /** Worker: the master the PLMC relay let in (null when none), for the radio keep-awake. */
+    external fun nativeSetWorkerPeer(peer: String?)
+
     /** Memory read speed in GB/s; ranks phones by how fast they generate. */
     external fun nativeMemBandwidth(threads: Int): Double
 

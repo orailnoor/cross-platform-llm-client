@@ -171,7 +171,7 @@ class ChatTemplateTest {
 
     @Test
     fun testGemmaFormat() {
-        val template = GemmaTemplate()
+        val template = Gemma2Template()
         val messages = listOf(
             TemplateChatMessage("system", "You are a helpful assistant."),
             TemplateChatMessage("user", "Hello!"),

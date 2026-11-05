@@ -94,12 +94,15 @@ android {
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
         
         testImplementation("org.jetbrains.kotlin:kotlin-test")
+        testImplementation("junit:junit:4.13.2")
         testImplementation("org.mockito:mockito-core:5.0.0")
     }
 
     testOptions {
         unitTests.all {
-            it.useJUnitPlatform()
+            // Like Android, where InetAddress.getLoopbackAddress() is ::1.
+            it.systemProperty("java.net.preferIPv6Addresses", "true")
         }
     }
+
 }

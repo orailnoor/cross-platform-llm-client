@@ -12,6 +12,7 @@ import 'package:llama_flutter_android/llama_flutter_android.dart';
 import '../core/constants.dart';
 import '../core/ui.dart';
 import 'app_log_service.dart';
+import 'cluster_qr.dart';
 import 'hive_service.dart';
 
 /// What this phone does in a phone cluster.
@@ -56,8 +57,8 @@ class ClusterService extends GetxService {
   /// iOS can't stop the worker without closing the app.
   static bool get workerStopsWithApp => !kIsWeb && Platform.isIOS;
 
-  /// QR codes a worker shows: privatelm://worker?host=…&port=…
-  static const _qrScheme = 'privatelm';
+  static const rejectedMessage = 'This worker was reset. Scan its code again.';
+  static const unpairedMessage = 'Scan again to reconnect';
 
   /// Speed assumed for workers paired before they reported one (GB/s).
   static const _unknownSpeed = 4.0;
@@ -65,11 +66,12 @@ class ClusterService extends GetxService {
   /// Workers the master can use on its next GGUF load.
   final workers = <ClusterWorker>[].obs;
 
+  /// Endpoints of workers whose pairing was reset (seen at the last check):
+  /// they answer, but only scanning their new code brings them back.
+  final resetWorkers = <String>{}.obs;
+
   /// Master mode: use [workers] when loading GGUF models.
   final enabled = false.obs;
-
-  final found = <ClusterWorker>[].obs;
-  final isScanning = false.obs;
 
   /// This phone's worker service.
   final worker = const ClusterWorkerStatus(state: 'stopped').obs;
@@ -80,6 +82,9 @@ class ClusterService extends GetxService {
 
   /// This phone's Wi-Fi address, or null when it isn't on Wi-Fi.
   final wifiAddress = RxnString();
+
+  /// This phone's pairing key as a worker (in its QR code), once loaded.
+  final pairingKey = RxnString();
 
   /// How the loaded model is spread across phones; empty when it isn't.
   final split = <ClusterShare>[].obs;
@@ -162,15 +167,24 @@ class ClusterService extends GetxService {
   String? get workerQrData {
     final host = wifiAddress.value;
     final status = worker.value;
-    if (host == null || !status.running) return null;
-    return Uri(scheme: _qrScheme, host: 'worker', queryParameters: {
-      'host': host,
-      'port': '${LlamaCluster.defaultPort}',
-      if (deviceName.isNotEmpty) 'name': deviceName,
-      if (status.ramMb > 0) 'ram': '${status.ramMb}',
-      if (status.bandwidth > 0) 'bw': status.bandwidth.toStringAsFixed(1),
-      if (status.id != null) 'id': status.id!,
-    }).toString();
+    final key = pairingKey.value;
+    if (host == null || !status.running || key == null || status.id == null) return null;
+    return buildWorkerQr(
+      host: host,
+      port: LlamaCluster.defaultPort,
+      id: status.id!,
+      key: key,
+      name: deviceName,
+      ramMb: status.ramMb,
+      bandwidth: status.bandwidth,
+    );
+  }
+
+  /// Gives this worker a new pairing key and QR code: every master that
+  /// paired with it must scan again.
+  Future<void> resetPairing() async {
+    await LlamaCluster.resetPairing();
+    pairingKey.value = await LlamaCluster.workerPairingKey();
   }
 
   Future<void> startWorker() async {
@@ -213,6 +227,9 @@ class ClusterService extends GetxService {
   Future<void> refreshWorkerStatus() async {
     try {
       worker.value = await LlamaCluster.workerStatus();
+      if (worker.value.running && pairingKey.value == null) {
+        pairingKey.value = await LlamaCluster.workerPairingKey();
+      }
     } catch (e) {
       Get.find<AppLogService>().error('Cluster worker status failed', details: e);
     }
@@ -234,100 +251,108 @@ class ClusterService extends GetxService {
 
   // ── Master: workers ────────────────────────────────────────────────────
 
-  /// Adds the worker from a scanned QR code. Returns an error message, or
-  /// null on success.
+  /// Adds (pairs) the worker from a scanned QR code: the only way to add
+  /// one, because the code carries its pairing key. Returns an error
+  /// message, or null on success.
   Future<String?> addFromQr(String data) async {
-    final uri = Uri.tryParse(data.trim());
-    final params = uri?.queryParameters ?? const {};
-    final host = params['host'];
-    final port = int.tryParse(params['port'] ?? '');
-    if (uri == null || uri.scheme != _qrScheme || host == null || port == null) {
-      return 'That isn\'t a PrivateLM worker code';
+    final ({ClusterWorker worker, String key}) scanned;
+    try {
+      scanned = parseWorkerQr(data);
+    } on FormatException catch (e) {
+      return e.message;
     }
-    return _add(ClusterWorker(
-      name: params['name'] ?? host,
-      host: host,
-      port: port,
-      ramMb: int.tryParse(params['ram'] ?? ''),
-      bandwidth: double.tryParse(params['bw'] ?? ''),
-      model: params['name'],
-      id: params['id'],
-    ));
-  }
-
-  /// Adds a worker by IP ("192.168.1.20" or "192.168.1.20:50052"). Returns
-  /// an error message, or null on success.
-  Future<String?> addManual(String input) async {
-    final text = input.trim();
-    if (text.isEmpty) return 'Enter the worker phone\'s IP address';
-    final host = text.contains(':') ? text.substring(0, text.lastIndexOf(':')) : text;
-    final port = text.contains(':')
-        ? int.tryParse(text.substring(text.lastIndexOf(':') + 1))
-        : LlamaCluster.defaultPort;
-    if (host.isEmpty || port == null) return 'Use the form 192.168.1.20:50052';
-    return _add(ClusterWorker(name: host, host: host, port: port));
-  }
-
-  Future<String?> addFound(ClusterWorker w) => _add(w);
-
-  /// Finds saved workers that no longer answer at their address (they moved
-  /// to another Wi-Fi, a hotspot, or got a new IP) by their device ID on
-  /// the network, and updates them. Returns the ones still unreachable.
-  Future<List<ClusterWorker>> relocateWorkers() async {
-    final missing = <ClusterWorker>[];
-    for (final w in workers) {
-      if (!await LlamaCluster.probe(w.endpoint)) missing.add(w);
+    final w = scanned.worker;
+    // Check the scanned key before storing it: a stale code (an old
+    // screenshot) mustn't replace the key of a worker that works.
+    final result = await LlamaCluster.probe(w, key: scanned.key);
+    if (result != ProbeResult.ok) {
+      return result == ProbeResult.rejected
+          ? rejectedMessage
+          : 'Can\'t reach ${w.endpoint}. Check that the phone is a worker '
+              'and on the same Wi-Fi.';
     }
-    if (missing.isEmpty) return const [];
-    final seen = await LlamaCluster.discover();
-    var moved = 0;
-    final unreachable = <ClusterWorker>[];
-    for (final w in missing) {
-      final match = seen.firstWhereOrNull((s) => w.id != null && s.id == w.id);
-      final i = workers.indexWhere((x) => x.endpoint == w.endpoint);
-      if (match == null || match.endpoint == w.endpoint || i < 0) {
-        unreachable.add(w);
-        continue;
-      }
-      workers[i] = w.movedTo(match.host, match.port);
-      moved++;
-    }
-    if (moved > 0) {
-      await _save();
-      Get.find<AppLogService>().info('Phone cluster: found $moved worker(s) at a new address');
-    }
-    return unreachable;
-  }
-
-  Future<String?> _add(ClusterWorker worker) async {
-    if (!await LlamaCluster.probe(worker.endpoint)) {
-      return 'Can\'t reach ${worker.endpoint}. Check that the phone is a worker '
-          'and on the same Wi-Fi.';
-    }
-    workers.removeWhere((w) => w.endpoint == worker.endpoint);
-    workers.add(worker);
-    found.removeWhere((w) => w.endpoint == worker.endpoint);
+    await LlamaCluster.pairWorker(w.id!, scanned.key);
+    workers.removeWhere((x) => x.endpoint == w.endpoint || x.id == w.id);
+    resetWorkers.remove(w.endpoint);
+    workers.add(w);
     await _save();
     return null;
   }
 
-  Future<void> remove(ClusterWorker w) async {
-    workers.removeWhere((s) => s.endpoint == w.endpoint);
-    await _save();
+  /// Finds saved workers that no longer answer at their address (they moved
+  /// to another Wi-Fi, a hotspot, or got a new IP) by their device ID on
+  /// the network, and updates them. Returns the ones still unreachable,
+  /// including any that must be scanned again.
+  Future<List<ClusterWorker>> relocateWorkers() async {
+    final result = await relocate(workers.toList(),
+        probe: LlamaCluster.probe, discover: LlamaCluster.discover);
+    resetWorkers.assignAll(result.rejected.map((w) => w.endpoint));
+    if (result.moved > 0) {
+      workers.assignAll(result.workers);
+      await _save();
+      Get.find<AppLogService>().info('Phone cluster: found ${result.moved} worker(s) at a new address');
+    }
+    return result.unreachable;
   }
 
-  bool isAdded(ClusterWorker w) => workers.any((s) => s.endpoint == w.endpoint);
-
-  /// Looks for workers on the Wi-Fi (doesn't work on every router).
-  Future<void> scanNearby() async {
-    if (isScanning.value) return;
-    isScanning.value = true;
-    try {
-      final list = await LlamaCluster.discover();
-      found.assignAll(list.where((w) => !isAdded(w)));
-    } finally {
-      isScanning.value = false;
+  /// [relocateWorkers] without the platform: [probe] checks a worker (and
+  /// its pairing key), [discover] lists workers seen on the network. A worker
+  /// only moves to an address where it proves it holds its key, so another
+  /// device announcing the same ID can't take its place.
+  static Future<
+      ({
+        List<ClusterWorker> workers,
+        List<ClusterWorker> unreachable,
+        List<ClusterWorker> rejected,
+        int moved,
+      })> relocate(
+    List<ClusterWorker> workers, {
+    required Future<ProbeResult> Function(ClusterWorker) probe,
+    required Future<List<ClusterWorker>> Function() discover,
+  }) async {
+    final unreachable = <ClusterWorker>[];
+    final rejected = <ClusterWorker>[];
+    final missing = <ClusterWorker>[];
+    for (final w in workers) {
+      if (!w.paired) {
+        unreachable.add(w);
+        continue;
+      }
+      switch (await probe(w)) {
+        case ProbeResult.ok:
+          break;
+        case ProbeResult.rejected:
+          // Reachable, but reset: only scanning its new code helps.
+          unreachable.add(w);
+          rejected.add(w);
+        case ProbeResult.unreachable:
+        case ProbeResult.unpaired:
+          missing.add(w);
+      }
     }
+    final updated = [...workers];
+    var moved = 0;
+    if (missing.isNotEmpty) {
+      final seen = await discover();
+      for (final w in missing) {
+        final match = seen.firstWhereOrNull((s) => w.id != null && s.id == w.id);
+        final candidate = match == null || match.endpoint == w.endpoint ? null : w.movedTo(match.host, match.port);
+        if (candidate == null || await probe(candidate) != ProbeResult.ok) {
+          unreachable.add(w);
+          continue;
+        }
+        updated[updated.indexOf(w)] = candidate;
+        moved++;
+      }
+    }
+    return (workers: updated, unreachable: unreachable, rejected: rejected, moved: moved);
+  }
+
+  Future<void> remove(ClusterWorker w) async {
+    workers.removeWhere((s) => s.endpoint == w.endpoint);
+    resetWorkers.remove(w.endpoint);
+    if (w.id != null) await LlamaCluster.forgetWorker(w.id!);
+    await _save();
   }
 
   Future<void> _setEnabled(bool value) async {
@@ -362,8 +387,14 @@ class ClusterService extends GetxService {
     // fit without them.
     final offline = await relocateWorkers();
     final available = workers.where((w) => !offline.any((o) => o.endpoint == w.endpoint)).toList();
-    if (offline.isNotEmpty) {
-      final names = offline.map((w) => w.model ?? w.name).join(', ');
+    final reset = offline.where((w) => resetWorkers.contains(w.endpoint)).toList();
+    final away = offline.where((w) => !resetWorkers.contains(w.endpoint)).toList();
+    if (reset.isNotEmpty) {
+      final names = reset.map((w) => w.model ?? w.name).join(', ');
+      showToast('Phone cluster', '$names: $rejectedMessage', tone: ToastTone.warning);
+    }
+    if (away.isNotEmpty) {
+      final names = away.map((w) => w.model ?? w.name).join(', ');
       showToast('Phone cluster', 'Not reachable, loading without: $names');
     }
 
@@ -415,9 +446,12 @@ class ClusterService extends GetxService {
         localWeight: master.assignedMb,
       );
     } on PlatformException catch (e) {
-      throw Exception(
-          '${e.message ?? 'A worker is unreachable'}. Turn on Worker on that '
-          'phone, or set this phone\'s Phone cluster to Off.');
+      throw Exception(switch (e.code) {
+        'REJECTED' => '${e.message}. $rejectedMessage',
+        'UNPAIRED' => '${e.message}. $unpairedMessage',
+        _ => '${e.message ?? 'A worker is unreachable'}. Turn on Worker on that '
+            'phone, or set this phone\'s Phone cluster to Off.',
+      });
     }
     return used.length;
   }

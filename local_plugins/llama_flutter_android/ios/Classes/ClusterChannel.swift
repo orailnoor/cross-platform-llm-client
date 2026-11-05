@@ -12,6 +12,9 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
     private var ramMb = 0
     private var bandwidth = 0.0
     private var error: String?
+    private var relay: PlmcWorkerRelay?
+    /// llama.cpp's RPC server, on loopback only.
+    private static let rpcPort = 50053
 
     init(messenger: FlutterBinaryMessenger) {
         channel = FlutterMethodChannel(name: "llama_flutter_android/cluster", binaryMessenger: messenger)
@@ -48,8 +51,21 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
                 "id": Self.workerId,
             ]
             if let error = error { status["error"] = error }
-            if running, let peer = LlamaClusterWorker.connectedPeer() { status["peer"] = peer }
+            if running, let peer = relay?.peer { status["peer"] = peer }
             result(status)
+        case "workerPairingKey":
+            DispatchQueue.global(qos: .userInitiated).async {
+                let key = Self.base64url(PairingKeychain.workerSecret())
+                DispatchQueue.main.async { result(key) }
+            }
+        case "resetPairing":
+            DispatchQueue.global(qos: .userInitiated).async {
+                PairingKeychain.resetWorkerSecret()
+                // The relay reads the new secret per connection; this closes
+                // the connections made with the old one.
+                self.relay?.dropAll()
+                DispatchQueue.main.async { result(nil) }
+            }
         case "setKeepScreenOn":
             UIApplication.shared.isIdleTimerDisabled = args["on"] as? Bool ?? false
             result(nil)
@@ -91,9 +107,20 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
             self.bandwidth = LlamaClusterWorker.memoryBandwidth(withThreads: Int32(self.performanceCores()))
             let cache = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true)[0]
                 + "/cluster_cache"
-            let failure = LlamaClusterWorker.start(onPort: Int32(port),
+            var failure = LlamaClusterWorker.start(onPort: Int32(Self.rpcPort),
                                                    threads: Int32(self.performanceCores()),
                                                    cacheDir: cache)
+            if failure == nil {
+                let relay = PlmcWorkerRelay(publicPort: UInt16(port), upstreamPort: UInt16(Self.rpcPort),
+                                            keySupplier: { PairingKeychain.workerSecret() },
+                                            onPeerChange: { LlamaClusterWorker.setRelayPeer($0) })
+                do {
+                    try relay.start()
+                    self.relay = relay
+                } catch {
+                    failure = "Couldn't listen on port \(port) (in use?)"
+                }
+            }
             DispatchQueue.main.async {
                 if let failure = failure {
                     self.error = failure
@@ -141,6 +168,14 @@ final class ClusterChannel: NSObject, NetServiceDelegate {
         let id = UUID().uuidString.lowercased()
         UserDefaults.standard.set(id, forKey: key)
         return id
+    }
+
+    /// base64url without padding, as in the worker's QR code.
+    static func base64url(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private func performanceCores() -> Int {

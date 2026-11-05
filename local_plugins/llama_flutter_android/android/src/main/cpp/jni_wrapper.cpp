@@ -380,6 +380,21 @@ Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeWorkerPeer(
     return g_worker_peer.empty() ? nullptr : env->NewStringUTF(g_worker_peer.c_str());
 }
 
+/// Cluster worker: the master the PLMC relay let in (or null). The RPC server
+/// itself only ever sees the relay on loopback.
+extern "C" JNIEXPORT void JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeSetWorkerPeer(
+        JNIEnv* env, jobject /* this */, jstring peer) {
+    std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    if (peer == nullptr) {
+        g_worker_peer.clear();
+        return;
+    }
+    const char* chars = env->GetStringUTFChars(peer, nullptr);
+    g_worker_peer.assign(chars);
+    env->ReleaseStringUTFChars(peer, chars);
+}
+
 /// Memory read speed in GB/s with `threads` threads. Token generation is
 /// limited by how fast weights stream from RAM, so this ranks phones for the
 /// cluster better than core counts or clock speeds do. Takes ~0.2 s.
@@ -529,14 +544,13 @@ static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
         g_load_buffers.append(start, at - start).append("\t")
             .append(std::to_string(mib)).append("\n");
     }
+    // The RPC server only sees the PLMC relay (loopback); the real master's
+    // address comes from nativeSetWorkerPeer instead.
     static const char kConnected[] = "RPC client connected: ";
     if (std::strncmp(text, kConnected, sizeof(kConnected) - 1) == 0) {
-        g_worker_peer.assign(text + sizeof(kConnected) - 1);
-        while (!g_worker_peer.empty() && std::isspace((unsigned char)g_worker_peer.back())) {
-            g_worker_peer.pop_back();
-        }
-    } else if (std::strncmp(text, "RPC client disconnected", 23) == 0) {
-        g_worker_peer.clear();
+        std::string peer(text + sizeof(kConnected) - 1);
+        while (!peer.empty() && std::isspace((unsigned char)peer.back())) peer.pop_back();
+        if (peer.rfind("127.", 0) != 0) g_worker_peer = peer;
     }
     if (!g_capture_load_error) return;
     if (level == GGML_LOG_LEVEL_ERROR) {

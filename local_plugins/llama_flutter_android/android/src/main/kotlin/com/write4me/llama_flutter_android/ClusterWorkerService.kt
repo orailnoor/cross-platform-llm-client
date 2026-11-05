@@ -23,6 +23,10 @@ import java.io.File
  * Runs this phone as a cluster worker: llama.cpp's RPC server over the CPU,
  * advertised on the local network for masters to find.
  *
+ * The RPC server only listens on loopback ([RPC_PORT]); the network reaches
+ * it through [WorkerRelay], which lets in masters holding this phone's
+ * pairing secret (from its QR code) and encrypts everything.
+ *
  * Lives in its own process (":cluster") because ggml's server loop can't be
  * stopped; stopping the worker ends the process. It reports its state to the
  * app through [statusFile] (JSON), and by whether the process is alive.
@@ -35,13 +39,18 @@ class ClusterWorkerService : Service() {
     @Volatile private var running = false
     private var ramMb = 0L
     private var bandwidth = 0.0
+    private var relay: WorkerRelay? = null
 
     companion object {
         private const val TAG = "ClusterWorker"
         const val ACTION_STOP = "com.write4me.llama_flutter_android.STOP_CLUSTER_WORKER"
+        /** The pairing secret changed: drop every master connected with the old one. */
+        const val ACTION_RESET_PAIRING = "com.write4me.llama_flutter_android.RESET_CLUSTER_PAIRING"
         const val EXTRA_PORT = "port"
         const val EXTRA_THREADS = "threads"
         const val DEFAULT_PORT = 50052
+        /** llama.cpp's RPC server, on loopback only. */
+        const val RPC_PORT = 50053
         const val SERVICE_TYPE = "_privatelm._tcp."
         const val PROCESS_SUFFIX = ":cluster"
         private const val CHANNEL_ID = "ClusterWorkerChannel"
@@ -85,6 +94,10 @@ class ClusterWorkerService : Service() {
             shutdown()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_RESET_PAIRING) {
+            relay?.dropAll()
+            return START_NOT_STICKY
+        }
         startForeground(NOTIFICATION_ID, buildNotification("Starting…"))
         if (running) return START_NOT_STICKY
 
@@ -102,12 +115,27 @@ class ClusterWorkerService : Service() {
             ramMb = availableRamMb(this)
             bandwidth = ClusterNative.nativeMemBandwidth(threads)
             Log.i(TAG, "Worker: $threads threads, ${ramMb} MB free, %.1f GB/s".format(bandwidth))
+            val store = PairingStore(this)
+            val relay = WorkerRelay(
+                port, RPC_PORT, { store.workerSecret() },
+                log = { Log.i(TAG, it) },
+                onPeerChange = { ClusterNative.nativeSetWorkerPeer(it) },
+            )
+            try {
+                relay.start()
+            } catch (e: java.io.IOException) {
+                Log.e(TAG, "Couldn't listen on port $port", e)
+                writeStatus("error", error = "Couldn't listen on port $port (in use?)")
+                shutdown()
+                return@Thread
+            }
+            this.relay = relay
             advertise(port)
             writeStatus("running")
             startStatusLoop()
             val error = ClusterNative.nativeServe(
                 applicationInfo.nativeLibraryDir,
-                "0.0.0.0:$port",
+                "127.0.0.1:$RPC_PORT",
                 cacheDir.absolutePath,
                 threads.toLong()
             )
@@ -123,7 +151,7 @@ class ClusterWorkerService : Service() {
         Thread({
             var lastText = ""
             while (running) {
-                val peer = ClusterNative.nativeWorkerPeer()
+                val peer = relay?.peer
                 val held = residentMb()
                 writeStatus("running", peer = peer, heldMb = held)
                 val text = if (peer != null) {
@@ -214,6 +242,8 @@ class ClusterWorkerService : Service() {
 
     private fun shutdown() {
         running = false
+        relay?.stop()
+        relay = null
         try {
             registration?.let { nsdManager?.unregisterService(it) }
         } catch (e: IllegalArgumentException) {
