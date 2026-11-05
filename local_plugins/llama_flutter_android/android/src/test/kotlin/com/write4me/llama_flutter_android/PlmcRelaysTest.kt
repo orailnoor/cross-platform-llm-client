@@ -18,7 +18,8 @@ import kotlin.concurrent.thread
 import kotlin.random.Random
 
 class PlmcRelaysTest {
-    private val loopback = InetAddress.getLoopbackAddress()
+    /** What llama.cpp uses on both sides: its RPC server and the master's endpoints are IPv4. */
+    private val loopback = InetAddress.getByName("127.0.0.1")
     private val key = ByteArray(32) { it.toByte() }
     private val otherKey = ByteArray(32) { (it + 7).toByte() }
 
@@ -215,6 +216,21 @@ class PlmcRelaysTest {
 
         s.close()
         assertEquals("none", changes.poll(2, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun relaysUseIpv4LoopbackLikeLlamaCpp() {
+        // The worker relay must reach an RPC server bound to 127.0.0.1, and
+        // llama.cpp on the master connects to the "127.0.0.1:<port>" it's given.
+        val endpoint = MasterRelays.use(listOf(RelayTarget("127.0.0.1", worker.localPort, key)))[0]
+        cleanup += { MasterRelays.clear() }
+        val host = endpoint.substringBeforeLast(':')
+        val s = Socket(host, endpoint.substringAfterLast(':').toInt()).also { cleanup += { it.close() } }
+        s.soTimeout = 10_000
+        s.getOutputStream().apply { write("v4".toByteArray()); flush() }
+        val back = ByteArray(2)
+        DataInputStream(s.getInputStream()).readFully(back)
+        assertEquals("v4", String(back))
     }
 
     @Test

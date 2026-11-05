@@ -10,6 +10,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
+ * IPv4 loopback, as llama.cpp uses on both sides (its RPC server binds
+ * 127.0.0.1; the master's endpoints are "127.0.0.1:<port>"). Not
+ * InetAddress.getLoopbackAddress(): on Android that is ::1.
+ */
+private val IPV4_LOOPBACK: InetAddress = InetAddress.getByAddress("localhost", byteArrayOf(127, 0, 0, 1))
+
+/**
  * Accepts on [server] until it's closed. A failed accept (e.g. out of file
  * descriptors during a flood) or a thread that can't start drops that one
  * connection; the listener keeps going.
@@ -138,7 +145,7 @@ class WorkerRelay(
             handshaking.decrementAndGet()
         }
         val upstream = try {
-            Socket(InetAddress.getLoopbackAddress(), upstreamPort)
+            Socket(IPV4_LOOPBACK, upstreamPort)
         } catch (e: IOException) {
             log("Worker RPC server not reachable on loopback")
             session.close()
@@ -188,7 +195,7 @@ class MasterRelay(
     /** Starts listening on loopback; returns the local port. */
     fun start(): Int {
         server?.let { return it.localPort }
-        val s = ServerSocket(0, 50, InetAddress.getLoopbackAddress())
+        val s = ServerSocket(0, 50, IPV4_LOOPBACK)
         server = s
         acceptLoop(s, "plmc-master") { local ->
             live += local

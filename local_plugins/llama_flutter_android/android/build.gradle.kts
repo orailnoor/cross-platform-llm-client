@@ -98,4 +98,11 @@ android {
         testImplementation("org.mockito:mockito-core:5.0.0")
     }
 
+    testOptions {
+        unitTests.all {
+            // Like Android, where InetAddress.getLoopbackAddress() is ::1.
+            it.systemProperty("java.net.preferIPv6Addresses", "true")
+        }
+    }
+
 }
