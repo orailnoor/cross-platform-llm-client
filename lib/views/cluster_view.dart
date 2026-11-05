@@ -142,6 +142,12 @@ class _ClusterViewState extends State<ClusterView> {
           ),
           child: QrImageView(data: qr, size: 220, padding: EdgeInsets.zero),
         ),
+        const SizedBox(height: 8),
+        Text(
+          'Anyone who scans this code can use this phone as a worker. Don\'t share it.',
+          style: t.caption,
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 16),
         Text('Scan this from the master phone', style: t.bodyStrong),
         const SizedBox(height: 6),
@@ -155,6 +161,12 @@ class _ClusterViewState extends State<ClusterView> {
           Expanded(child: _Stat(label: 'Free memory', value: _gb(s.ramMb))),
           Expanded(child: _Stat(label: 'Memory speed', value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
         ]),
+        const SizedBox(height: 16),
+        PillButton(
+          label: 'Reset pairing',
+          icon: Icons.key_off_rounded,
+          onPressed: () => _resetPairing(context),
+        ),
       ]);
     }
 
@@ -221,11 +233,13 @@ class _ClusterViewState extends State<ClusterView> {
             AppRow(
               icon: Icons.smartphone_rounded,
               title: w.model ?? w.name,
-              subtitle: [
-                w.endpoint,
-                if (w.ramMb != null) '${_gb(w.ramMb!)} free',
-                if (w.bandwidth != null) '${w.bandwidth!.toStringAsFixed(1)} GB/s',
-              ].join(' · '),
+              subtitle: w.paired
+                  ? [
+                      w.endpoint,
+                      if (w.ramMb != null) '${_gb(w.ramMb!)} free',
+                      if (w.bandwidth != null) '${w.bandwidth!.toStringAsFixed(1)} GB/s',
+                    ].join(' · ')
+                  : ClusterService.unpairedMessage,
               trailing: IconButton(
                 icon: Icon(Icons.close_rounded, color: t.muted),
                 tooltip: 'Remove',
@@ -239,36 +253,6 @@ class _ClusterViewState extends State<ClusterView> {
         'fastest phones get the biggest share and phones that aren\'t needed '
         'are left out.',
       ),
-      const SectionHeader('Other ways to add'),
-      Row(children: [
-        PillButton(
-          label: cluster.isScanning.value ? 'Searching…' : 'Find nearby',
-          icon: Icons.wifi_find_rounded,
-          onPressed: cluster.isScanning.value ? null : cluster.scanNearby,
-        ),
-        const SizedBox(width: 10),
-        PillButton(
-          label: 'Enter IP',
-          icon: Icons.keyboard_rounded,
-          onPressed: () => _enterIp(context),
-        ),
-      ]),
-      if (cluster.found.isNotEmpty) ...[
-        const SizedBox(height: 12),
-        AppGroup(dividerIndent: 60, children: [
-          for (final w in cluster.found)
-            AppRow(
-              icon: Icons.smartphone_rounded,
-              title: w.model ?? w.name,
-              subtitle: w.endpoint,
-              trailing: PillButton(
-                label: 'Add',
-                primary: true,
-                onPressed: () => _report(cluster.addFound(w)),
-              ),
-            ),
-        ]),
-      ],
     ];
   }
 
@@ -277,30 +261,15 @@ class _ClusterViewState extends State<ClusterView> {
     if (code != null) await _report(cluster.addFromQr(code));
   }
 
-  Future<void> _enterIp(BuildContext context) async {
-    final ctrl = TextEditingController();
-    final input = await showAppSheet<String>(
+  Future<void> _resetPairing(BuildContext context) async {
+    final ok = await confirmSheet(
       context,
-      title: 'Enter worker IP',
-      subtitle: 'Shown under the worker\'s QR code',
-      builder: (ctx) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType: TextInputType.url,
-            decoration: appInputDecoration(ctx,
-                hint: '192.168.1.20:${LlamaCluster.defaultPort}'),
-            onSubmitted: (v) => Navigator.pop(ctx, v),
-          ),
-          const SizedBox(height: 16),
-          PrimaryButton(label: 'Add', onPressed: () => Navigator.pop(ctx, ctrl.text)),
-        ],
-      ),
+      title: 'Reset pairing?',
+      message: 'Masters paired with this phone will need to scan its new code.',
+      confirmLabel: 'Reset',
+      destructive: true,
     );
-    ctrl.dispose();
-    if (input != null) await _report(cluster.addManual(input));
+    if (ok) await cluster.resetPairing();
   }
 
   Future<void> _report(Future<String?> adding) async {
