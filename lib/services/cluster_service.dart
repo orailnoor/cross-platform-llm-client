@@ -66,6 +66,10 @@ class ClusterService extends GetxService {
   /// Workers the master can use on its next GGUF load.
   final workers = <ClusterWorker>[].obs;
 
+  /// Endpoints of workers whose pairing was reset (seen at the last check):
+  /// they answer, but only scanning their new code brings them back.
+  final resetWorkers = <String>{}.obs;
+
   /// Master mode: use [workers] when loading GGUF models.
   final enabled = false.obs;
 
@@ -269,6 +273,7 @@ class ClusterService extends GetxService {
     }
     await LlamaCluster.pairWorker(w.id!, scanned.key);
     workers.removeWhere((x) => x.endpoint == w.endpoint || x.id == w.id);
+    resetWorkers.remove(w.endpoint);
     workers.add(w);
     await _save();
     return null;
@@ -281,6 +286,7 @@ class ClusterService extends GetxService {
   Future<List<ClusterWorker>> relocateWorkers() async {
     final result = await relocate(workers.toList(),
         probe: LlamaCluster.probe, discover: LlamaCluster.discover);
+    resetWorkers.assignAll(result.rejected.map((w) => w.endpoint));
     if (result.moved > 0) {
       workers.assignAll(result.workers);
       await _save();
@@ -293,12 +299,19 @@ class ClusterService extends GetxService {
   /// its pairing key), [discover] lists workers seen on the network. A worker
   /// only moves to an address where it proves it holds its key, so another
   /// device announcing the same ID can't take its place.
-  static Future<({List<ClusterWorker> workers, List<ClusterWorker> unreachable, int moved})> relocate(
+  static Future<
+      ({
+        List<ClusterWorker> workers,
+        List<ClusterWorker> unreachable,
+        List<ClusterWorker> rejected,
+        int moved,
+      })> relocate(
     List<ClusterWorker> workers, {
     required Future<ProbeResult> Function(ClusterWorker) probe,
     required Future<List<ClusterWorker>> Function() discover,
   }) async {
     final unreachable = <ClusterWorker>[];
+    final rejected = <ClusterWorker>[];
     final missing = <ClusterWorker>[];
     for (final w in workers) {
       if (!w.paired) {
@@ -311,6 +324,7 @@ class ClusterService extends GetxService {
         case ProbeResult.rejected:
           // Reachable, but reset: only scanning its new code helps.
           unreachable.add(w);
+          rejected.add(w);
         case ProbeResult.unreachable:
         case ProbeResult.unpaired:
           missing.add(w);
@@ -331,11 +345,12 @@ class ClusterService extends GetxService {
         moved++;
       }
     }
-    return (workers: updated, unreachable: unreachable, moved: moved);
+    return (workers: updated, unreachable: unreachable, rejected: rejected, moved: moved);
   }
 
   Future<void> remove(ClusterWorker w) async {
     workers.removeWhere((s) => s.endpoint == w.endpoint);
+    resetWorkers.remove(w.endpoint);
     if (w.id != null) await LlamaCluster.forgetWorker(w.id!);
     await _save();
   }
@@ -372,8 +387,14 @@ class ClusterService extends GetxService {
     // fit without them.
     final offline = await relocateWorkers();
     final available = workers.where((w) => !offline.any((o) => o.endpoint == w.endpoint)).toList();
-    if (offline.isNotEmpty) {
-      final names = offline.map((w) => w.model ?? w.name).join(', ');
+    final reset = offline.where((w) => resetWorkers.contains(w.endpoint)).toList();
+    final away = offline.where((w) => !resetWorkers.contains(w.endpoint)).toList();
+    if (reset.isNotEmpty) {
+      final names = reset.map((w) => w.model ?? w.name).join(', ');
+      showToast('Phone cluster', '$names: $rejectedMessage', tone: ToastTone.warning);
+    }
+    if (away.isNotEmpty) {
+      final names = away.map((w) => w.model ?? w.name).join(', ');
       showToast('Phone cluster', 'Not reachable, loading without: $names');
     }
 

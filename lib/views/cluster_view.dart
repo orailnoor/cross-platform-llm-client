@@ -125,6 +125,13 @@ class _ClusterViewState extends State<ClusterView> {
           Expanded(child: _Stat(label: 'Free at start', value: _gb(s.ramMb))),
           Expanded(child: _Stat(label: 'Memory speed', value: '${s.bandwidth.toStringAsFixed(1)} GB/s')),
         ]),
+        const SizedBox(height: 16),
+        // Here too: a master the owner doesn't recognise is exactly when to reset.
+        PillButton(
+          label: 'Reset pairing',
+          icon: Icons.key_off_rounded,
+          onPressed: () => _resetPairing(context),
+        ),
       ]);
     } else if (!s.running || qr == null) {
       body = _centered(context, [
@@ -233,13 +240,15 @@ class _ClusterViewState extends State<ClusterView> {
             AppRow(
               icon: Icons.smartphone_rounded,
               title: w.model ?? w.name,
-              subtitle: w.paired
-                  ? [
-                      w.endpoint,
-                      if (w.ramMb != null) '${_gb(w.ramMb!)} free',
-                      if (w.bandwidth != null) '${w.bandwidth!.toStringAsFixed(1)} GB/s',
-                    ].join(' · ')
-                  : ClusterService.unpairedMessage,
+              subtitle: cluster.resetWorkers.contains(w.endpoint)
+                  ? ClusterService.rejectedMessage
+                  : w.paired
+                      ? [
+                          w.endpoint,
+                          if (w.ramMb != null) '${_gb(w.ramMb!)} free',
+                          if (w.bandwidth != null) '${w.bandwidth!.toStringAsFixed(1)} GB/s',
+                        ].join(' · ')
+                      : ClusterService.unpairedMessage,
               trailing: IconButton(
                 icon: Icon(Icons.close_rounded, color: t.muted),
                 tooltip: 'Remove',

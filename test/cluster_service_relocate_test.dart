@@ -27,6 +27,7 @@ void main() {
     expect(result.workers.single.host, '10.0.0.5');
     expect(result.moved, 0);
     expect(result.unreachable.single.endpoint, '10.0.0.5:50052');
+    expect(result.rejected, isEmpty, reason: 'an impostor at a new address is not a reset');
   });
 
   test('relocateSkipsUnpairedWorkers', () async {
@@ -57,5 +58,6 @@ void main() {
     );
     expect(searched, isFalse);
     expect(result.unreachable.single.endpoint, '10.0.0.5:50052');
+    expect(result.rejected.single.endpoint, '10.0.0.5:50052');
   });
 }
