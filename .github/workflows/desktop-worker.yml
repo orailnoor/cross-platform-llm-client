@@ -1,0 +1,41 @@
+name: Desktop RPC worker
+
+on:
+  pull_request:
+    paths:
+      - "desktop-worker/**"
+      - ".github/workflows/desktop-worker.yml"
+  push:
+    paths:
+      - "desktop-worker/**"
+      - ".github/workflows/desktop-worker.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test Linux worker
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bash -n desktop-worker/scripts/build-worker.sh desktop-worker/scripts/start-worker.sh
+          bash desktop-worker/tests/test-start-worker.sh
+          bash desktop-worker/scripts/build-worker.sh
+      - name: Build and test macOS worker
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash -n desktop-worker/scripts/build-worker.sh desktop-worker/scripts/start-worker.sh
+          bash desktop-worker/tests/test-start-worker.sh
+          bash desktop-worker/scripts/build-worker.sh --metal
+      - name: Build and test Windows worker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\desktop-worker\scripts\build-worker.ps1
+          .\desktop-worker\tests\test-start-worker.ps1
