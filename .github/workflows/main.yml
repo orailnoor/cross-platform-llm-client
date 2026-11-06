@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout source
