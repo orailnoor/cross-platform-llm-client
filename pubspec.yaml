@@ -65,7 +65,7 @@ dependencies:
   speech_to_text: ^7.0.0
   firebase_crashlytics: ^4.3.10
   package_info_plus: ^9.0.1
-  device_info_plus: ^12.4.0
+  device_info_plus: 11.5.0
   archive: ^4.0.9
   xml: ^6.6.1
   qr_flutter: ^4.1.0
