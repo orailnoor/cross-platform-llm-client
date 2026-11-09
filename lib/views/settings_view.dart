@@ -35,8 +35,8 @@ class SettingsView extends GetView<SettingsController> {
           padding: kPagePadding,
           children: [
             const SectionHeader('General',
-                padding: EdgeInsets.fromLTRB(4, 8, 4, 8)),
-            AppGroup(dividerIndent: 60, children: [
+                padding: EdgeInsets.fromLTRB(0, 4, 12, 4)),
+            AppGroup(children: [
               _navRow(
                 context,
                 icon: Icons.palette_outlined,
@@ -56,7 +56,7 @@ class SettingsView extends GetView<SettingsController> {
               ),
             ]),
             const SectionHeader('Chat'),
-            AppGroup(dividerIndent: 60, children: [
+            AppGroup(children: [
               _navRow(
                 context,
                 icon: Icons.memory_rounded,
@@ -91,7 +91,7 @@ class SettingsView extends GetView<SettingsController> {
               ),
             ]),
             const SectionHeader('Performance'),
-            AppGroup(dividerIndent: 60, children: [
+            AppGroup(children: [
               _navRow(
                 context,
                 icon: Icons.speed_rounded,
@@ -128,7 +128,7 @@ class SettingsView extends GetView<SettingsController> {
                 ),
             ]),
             const SectionHeader('About'),
-            AppGroup(dividerIndent: 60, children: [
+            AppGroup(children: [
               if (showUpdates) _buildUpdatesRow(context),
               _navRow(
                 context,
@@ -199,7 +199,7 @@ class SettingsView extends GetView<SettingsController> {
     final t = AppTokens.of(context);
     return AppGroup(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Theme', style: t.body),
           const SizedBox(height: 10),
@@ -223,7 +223,7 @@ class SettingsView extends GetView<SettingsController> {
   }
 
   Widget _buildInferenceGroup(BuildContext context) {
-    return AppGroup(dividerIndent: 60, children: [
+    return AppGroup(children: [
       AppRow(
         icon: Icons.phone_iphone_rounded,
         title: 'Local (on-device)',
@@ -327,7 +327,7 @@ class SettingsView extends GetView<SettingsController> {
     } else {
       status = 'Not checked yet';
     }
-    return AppGroup(dividerIndent: 60, children: [
+    return AppGroup(children: [
       AppRow(
         icon: update != null ? Icons.download_rounded : Icons.refresh_rounded,
         title: update != null
@@ -382,7 +382,7 @@ class SettingsView extends GetView<SettingsController> {
       {required String note, required VoidCallback onSave}) {
     final t = AppTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 0, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 0, 0),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(
           child: Padding(
@@ -419,10 +419,10 @@ class SettingsView extends GetView<SettingsController> {
     final t = AppTokens.of(context);
     final c = color ?? t.accent;
     return Padding(
-      padding: const EdgeInsets.only(top: 14, bottom: 12),
+      padding: const EdgeInsets.only(top: 10, bottom: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(children: [
             Expanded(child: Text(label, style: t.body)),
             const SizedBox(width: 12),
@@ -457,12 +457,12 @@ class SettingsView extends GetView<SettingsController> {
         ),
         if (caption != null)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text(caption, style: t.small),
           ),
         for (final w in below)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: w,
           ),
       ]),
@@ -559,7 +559,7 @@ class SettingsView extends GetView<SettingsController> {
           );
 
       return Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(6, 6, 12, 10),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             const IconBadge(Icons.smartphone_rounded),
@@ -627,7 +627,7 @@ class SettingsView extends GetView<SettingsController> {
       ),
     ];
     final t = AppTokens.of(context);
-    return AppGroup(dividerIndent: 60, children: [
+    return AppGroup(children: [
       for (final m in modes)
         AppRow(
           icon: m.icon,
@@ -637,7 +637,7 @@ class SettingsView extends GetView<SettingsController> {
           onTap: () => controller.setLiteRtPerformanceMode(m.value),
         ),
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Text(
             'Applies to both GGUF and LiteRT models. Takes effect the next '
             'time a model is loaded.',
@@ -790,7 +790,7 @@ class SettingsView extends GetView<SettingsController> {
 
       // Size
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: Text('Image size', style: t.body)),
@@ -848,7 +848,7 @@ class SettingsView extends GetView<SettingsController> {
 
       // Backend
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Backend', style: t.body),
           const SizedBox(height: 2),
