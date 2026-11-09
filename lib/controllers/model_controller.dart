@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import '../services/companion_files.dart';
 import '../services/download_service.dart';
 import '../services/gguf_metadata.dart';
 import '../services/inference_service.dart';
@@ -280,9 +281,9 @@ class ModelController extends GetxController {
 
   bool _isAuxiliaryImageFile(String filename) {
     final lower = filename.toLowerCase();
-    // GGUF vision projectors ride along with their model; never list or
-    // load them as models of their own.
-    if (lower.endsWith('.gguf') && lower.contains('mmproj')) return true;
+    // GGUF vision projectors, MTP draft heads and imatrix files ride along
+    // with their model; never list or load them as models of their own.
+    if (CompanionFiles.isHelperName(filename)) return true;
     return lower == 'taesd.safetensors' ||
         lower.startsWith('taesd-') ||
         lower.startsWith('taesd_') ||

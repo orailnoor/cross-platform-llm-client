@@ -1177,7 +1177,23 @@ struct ggml_backend_opencl_context {
         }
 #else
         GGML_UNUSED(tensor);
-        CL_CHECK(clEnqueueNDRangeKernel(queue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, NULL));
+        {
+            // PrivateLM: name the failing kernel (error -54 etc. otherwise says nothing).
+            cl_int _err = clEnqueueNDRangeKernel(queue, kernel, work_dim, NULL, global_work_size, local_work_size, 0, NULL, NULL);
+            if (_err != CL_SUCCESS) {
+                char _name[256] = {0};
+                clGetKernelInfo(kernel, CL_KERNEL_FUNCTION_NAME, sizeof(_name) - 1, _name, NULL);
+                size_t _wg_max = 0;
+                clGetKernelWorkGroupInfo(kernel, NULL, CL_KERNEL_WORK_GROUP_SIZE, sizeof(_wg_max), &_wg_max, NULL);
+                GGML_LOG_ERROR("ggml_opencl: kernel %s failed (%d): dims=%u global=%zu,%zu,%zu local=%zu,%zu,%zu kernel_wg_max=%zu op=%s\n",
+                    _name, _err, work_dim,
+                    global_work_size[0], work_dim > 1 ? global_work_size[1] : 1, work_dim > 2 ? global_work_size[2] : 1,
+                    local_work_size ? local_work_size[0] : 0, local_work_size && work_dim > 1 ? local_work_size[1] : 0,
+                    local_work_size && work_dim > 2 ? local_work_size[2] : 0, _wg_max,
+                    tensor ? ggml_op_desc(tensor) : "?");
+            }
+            CL_CHECK(_err);
+        }
 #endif
     }
 
@@ -2336,6 +2352,29 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
         CL_CHECK((backend_ctx->kernel_mul_mat_f16_f32_mrow_r4 = clCreateKernel(backend_ctx->program_mul_mv_f16_f32_mrow, "kernel_mul_mat_f16_f32_mrow_r4", &err), err));
         CL_CHECK((backend_ctx->kernel_mul_mat_f16_f32_mrow_h8 = clCreateKernel(backend_ctx->program_mul_mv_f16_f32_mrow, "kernel_mul_mat_f16_f32_mrow_h8", &err), err));
         CL_CHECK((backend_ctx->kernel_mul_mat_f16_f32_mrow_h8r2 = clCreateKernel(backend_ctx->program_mul_mv_f16_f32_mrow, "kernel_mul_mat_f16_f32_mrow_h8r2", &err), err));
+        // PrivateLM: the mrow kernels dispatch 64 x 16 = 1024 work-items. Older
+        // Adreno (650) compiles them with a lower per-kernel limit (768), which
+        // fails every launch with CL_INVALID_WORK_GROUP_SIZE; use the plain GEMV.
+        {
+            cl_kernel mrow[] = { backend_ctx->kernel_mul_mat_f16_f32_mrow, backend_ctx->kernel_mul_mat_f16_f32_mrow_r2,
+                                 backend_ctx->kernel_mul_mat_f16_f32_mrow_r4, backend_ctx->kernel_mul_mat_f16_f32_mrow_h8,
+                                 backend_ctx->kernel_mul_mat_f16_f32_mrow_h8r2 };
+            bool fits = true;
+            for (cl_kernel k : mrow) {
+                size_t wg = 0;
+                if (clGetKernelWorkGroupInfo(k, backend_ctx->device, CL_KERNEL_WORK_GROUP_SIZE, sizeof(wg), &wg, NULL) != CL_SUCCESS || wg < 64 * 16) {
+                    fits = false;
+                }
+            }
+            if (!fits) {
+                GGML_LOG_INFO("ggml_opencl: f16 mrow GEMV disabled (kernel work-group limit < 1024)\n");
+                backend_ctx->kernel_mul_mat_f16_f32_mrow = nullptr;
+                backend_ctx->kernel_mul_mat_f16_f32_mrow_r2 = nullptr;
+                backend_ctx->kernel_mul_mat_f16_f32_mrow_r4 = nullptr;
+                backend_ctx->kernel_mul_mat_f16_f32_mrow_h8 = nullptr;
+                backend_ctx->kernel_mul_mat_f16_f32_mrow_h8r2 = nullptr;
+            }
+        }
         GGML_LOG_CONT(".");
     }
 
@@ -5223,7 +5262,23 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
     }
 
     // repack
+    // PrivateLM patch: these kernels write 3D images, which Adreno 6xx
+    // (OpenCL 2.0, no cl_khr_3d_image_writes) can't compile, and a failed
+    // compile aborts. They only feed the binary WMM flash-attention kernel
+    // (A7x+), which is unused when they are absent.
+    backend_ctx->fa.kernel_repack_q_for_wmm = nullptr;
+    backend_ctx->fa.kernel_repack_k_for_wmm = nullptr;
+    backend_ctx->fa.kernel_repack_v_for_wmm = nullptr;
+    backend_ctx->fa.kernel_repack_mask_for_wmm = nullptr;
+    bool has_3d_image_writes = false;
     {
+        size_t ext_size = 0;
+        clGetDeviceInfo(backend_ctx->device, CL_DEVICE_EXTENSIONS, 0, NULL, &ext_size);
+        std::string ext(ext_size, '\0');
+        clGetDeviceInfo(backend_ctx->device, CL_DEVICE_EXTENSIONS, ext_size, ext.data(), NULL);
+        has_3d_image_writes = ext.find("cl_khr_3d_image_writes") != std::string::npos;
+    }
+    if (has_3d_image_writes) {
 #ifdef GGML_OPENCL_EMBED_KERNELS
         const std::string kernel_src {
             #include "flash_attn_repack.cl.h"
@@ -5246,7 +5301,7 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
         size_t bin_size = 0;
         backend_ctx->fa.kernel_flash_attn_f32_f16_bin = nullptr;
 
-        if (use_adreno_bin_kernels(backend_ctx)) {
+        if (use_adreno_bin_kernels(backend_ctx) && has_3d_image_writes) {
             const char * kernel_bin = (const char *)backend_ctx->get_adreno_bin_kernel("flash_attn_f32_f16_wmm", &bin_size);
             if (kernel_bin && bin_size > 0) {
                 cl_program prog =

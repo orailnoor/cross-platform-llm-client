@@ -52,6 +52,17 @@
             android:stopWithTask="false"
             tools:replace="android:exported,android:foregroundServiceType" />
 
+        <!-- Start on boot (setting): runs the app headless to load the
+             default model and start the API server. -->
+        <service
+            android:name=".HeadlessService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs the user's local AI model API server after the device restarts" />
+        </service>
         <!-- Boot receiver to restart after reboot -->
         <receiver
             android:name=".BootReceiver"

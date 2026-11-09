@@ -21,13 +21,32 @@ object ClusterNative {
      * Serves this phone's CPU to a coordinator. Blocks for as long as the
      * server runs; returns why it stopped if it couldn't start.
      */
-    external fun nativeServe(libDir: String, endpoint: String, cacheDir: String, nThreads: Long): String?
+    external fun nativeServe(libDir: String, endpoint: String, cacheDir: String, nThreads: Long, useGpu: Boolean): String?
 
     /** "<buffer name>\t<MiB>" lines: where the last load put its weights. */
     external fun nativeLastLoadBuffers(): String
 
     /** Worker: the connected master's address, or null. */
     external fun nativeWorkerPeer(): String?
+
+    /** Bench build: options applied to the next model load (-1 / "" = default). */
+    external fun nativeSetEngineOptions(
+        swaFull: Int, flashAttn: Int, typeK: String, typeV: String, threads: Int,
+        nBatch: Int, nUbatch: Int, gpuLayers: Int, localLayers: Int, opOffload: Int,
+        repack: Int,
+    )
+
+    /** Pin the compute threads of the next load to these CPUs (hex mask, "" = off). */
+    external fun nativeSetCpuMask(mask: String)
+
+    /** Bench build: llama-bench style pp/tg at a KV depth on the loaded model (JSON). */
+    external fun nativeBench(depth: Int, pp: Int, tg: Int): String
+
+    /** Bench build: every "buffer size" log line of the last load. */
+    external fun nativeMemLog(): String
+
+    /** Bench build: registered ggml devices, one per line. */
+    external fun nativeDevices(libDir: String, loadGpu: Boolean): String
 
     /** Memory read speed in GB/s; ranks phones by how fast they generate. */
     external fun nativeMemBandwidth(threads: Int): Double

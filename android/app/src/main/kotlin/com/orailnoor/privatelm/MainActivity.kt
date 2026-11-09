@@ -18,6 +18,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import kotlin.concurrent.thread
@@ -36,6 +37,14 @@ class MainActivity : FlutterActivity() {
     private var pendingImportResult: MethodChannel.Result? = null
     private var pendingModelsDir: String? = null
     private val monitoredInAppDownloads = ConcurrentHashMap.newKeySet<Long>()
+
+    // Start on boot runs the Dart side headless (HeadlessService); reuse that
+    // engine so the app never runs twice (two servers, two loaded models).
+    override fun provideFlutterEngine(context: Context): FlutterEngine? =
+        FlutterEngineCache.getInstance().get(HeadlessService.ENGINE_ID)
+
+    override fun shouldDestroyEngineWithHost(): Boolean =
+        FlutterEngineCache.getInstance().get(HeadlessService.ENGINE_ID) == null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

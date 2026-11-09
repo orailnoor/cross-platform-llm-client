@@ -22,6 +22,7 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi, ActivityAware {
     private var currentModelPath: String? = null
     private var nativeLoadError: Throwable? = null
     private var clusterChannel: ClusterChannel? = null
+    private var extChannel: LlamaExtChannel? = null
 
     companion object {
         private const val TAG = "LlamaFlutterPlugin"
@@ -37,11 +38,14 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi, ActivityAware {
         flutterApi = LlamaFlutterApi(binding.binaryMessenger)
         LlamaHostApi.setUp(binding.binaryMessenger, this)
         clusterChannel = ClusterChannel(context, binding.binaryMessenger, scope)
+        extChannel = LlamaExtChannel(context, binding.binaryMessenger, scope)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         clusterChannel?.dispose()
         clusterChannel = null
+        extChannel?.dispose()
+        extChannel = null
         scope.cancel()
         if (isModelLoaded.get()) {
             nativeFreeModel()
@@ -71,9 +75,15 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi, ActivityAware {
 
         scope.launch {
             try {
-                // Start foreground service for long-running task
-                val intent = Intent(context, InferenceService::class.java)
-                ContextCompat.startForegroundService(context, intent)
+                // Start foreground service for long-running task. Android 12+
+                // refuses this from the background (e.g. a headless start at
+                // boot); the load must not fail because of it.
+                try {
+                    val intent = Intent(context, InferenceService::class.java)
+                    ContextCompat.startForegroundService(context, intent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Inference foreground service not started: ${e.message}")
+                }
 
                 // Load model with progress callback
                 nativeLoadModel(
@@ -220,9 +230,12 @@ class LlamaFlutterAndroidPlugin : FlutterPlugin, LlamaHostApi, ActivityAware {
                     isModelLoaded.set(false)
                 }
                 
-                // Stop foreground service
-                val intent = Intent(context, InferenceService::class.java)
-                context.stopService(intent)
+                // Stop foreground service (unless the API server keeps it,
+                // e.g. while a keep-alive idle unload waits for a request)
+                if (!InferenceService.keepAwake) {
+                    val intent = Intent(context, InferenceService::class.java)
+                    context.stopService(intent)
+                }
                 
                 withContext(Dispatchers.Main) {
                     callback(Result.success(Unit))

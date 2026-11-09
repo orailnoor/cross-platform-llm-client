@@ -16,6 +16,16 @@ class GgufInfo {
   final int? valueLength;
   final int fileBytes;
 
+  /// Sliding-window attention: window size, per-layer pattern (true = SWA
+  /// layer), SWA head sizes, and how many trailing layers reuse earlier
+  /// layers' KV (Gemma 3n / 4). llama.cpp keeps SWA layers at their window
+  /// (swa_full off) and allocates no KV for shared layers.
+  final int? slidingWindow;
+  final List<bool>? swaPattern;
+  final int? keyLengthSwa;
+  final int? valueLengthSwa;
+  final int sharedKvLayers;
+
   const GgufInfo({
     required this.architecture,
     required this.name,
@@ -27,6 +37,11 @@ class GgufInfo {
     required this.keyLength,
     required this.valueLength,
     required this.fileBytes,
+    this.slidingWindow,
+    this.swaPattern,
+    this.keyLengthSwa,
+    this.valueLengthSwa,
+    this.sharedKvLayers = 0,
   });
 
   int get _headDimK =>
@@ -35,14 +50,25 @@ class GgufInfo {
       valueLength ?? (headCount > 0 ? embeddingLength ~/ headCount : 0);
 
   /// Bytes of KV cache for [contextTokens] (f16 K and V, as llama.cpp uses
-  /// by default).
+  /// by default). Sliding-window layers only hold their window (+ one
+  /// micro-batch); layers that share earlier layers' KV hold nothing.
   int kvCacheBytes(int contextTokens) {
     const bytesPerElement = 2;
-    return layers *
-        contextTokens *
-        headCountKv *
-        (_headDimK + _headDimV) *
-        bytesPerElement;
+    final kvLayers = (layers - sharedKvLayers).clamp(0, layers);
+    final window = slidingWindow;
+    final pattern = swaPattern;
+    var total = 0;
+    for (var i = 0; i < kvLayers; i++) {
+      final swa = window != null && pattern != null && i < pattern.length && pattern[i];
+      if (swa) {
+        final cells = contextTokens < window + 512 ? contextTokens : window + 512;
+        total += cells * headCountKv *
+            ((keyLengthSwa ?? _headDimK) + (valueLengthSwa ?? _headDimV)) * bytesPerElement;
+      } else {
+        total += contextTokens * headCountKv * (_headDimK + _headDimV) * bytesPerElement;
+      }
+    }
+    return total;
   }
 
   /// Working memory beyond weights + KV cache: compute buffers, GPU driver
@@ -191,6 +217,10 @@ class _GgufReader {
         final itemType = await _u32();
         final count = await _u64();
         final size = _scalarSize[itemType];
+        if (keep && itemType == 7 && count <= 4096) {
+          final d = await _bytes(count);
+          return [for (var i = 0; i < count; i++) d.getUint8(i) != 0];
+        }
         if (size != null) {
           await _skip(size * count);
         } else if (itemType == 8) {
@@ -274,6 +304,13 @@ class _GgufReader {
       keyLength: intOf('attention.key_length'),
       valueLength: intOf('attention.value_length'),
       fileBytes: _fileLength,
+      slidingWindow: intOf('attention.sliding_window'),
+      swaPattern: values['$arch.attention.sliding_window_pattern'] is List
+          ? (values['$arch.attention.sliding_window_pattern'] as List).cast<bool>()
+          : null,
+      keyLengthSwa: intOf('attention.key_length_swa'),
+      valueLengthSwa: intOf('attention.value_length_swa'),
+      sharedKvLayers: intOf('attention.shared_kv_layers') ?? 0,
     );
   }
 }

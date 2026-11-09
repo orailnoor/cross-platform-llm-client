@@ -12,6 +12,7 @@ import 'package:llama_flutter_android/llama_flutter_android.dart';
 import '../core/constants.dart';
 import '../core/ui.dart';
 import 'app_log_service.dart';
+import 'gguf_metadata.dart';
 import 'hive_service.dart';
 
 /// What this phone does in a phone cluster.
@@ -86,6 +87,12 @@ class ClusterService extends GetxService {
 
   String deviceName = '';
   double? _localSpeed;
+
+  /// Bench API: an explicit cluster for the next load (null = normal
+  /// planning). Bypasses the planner and the "fits here" sheet.
+  List<ClusterWorker>? adminWorkers;
+  List<double>? adminWeights;
+  double adminLocalWeight = 1.0;
   Timer? _statusTimer;
 
   ClusterRole get role => _workerRequested.value || worker.value.running
@@ -173,7 +180,7 @@ class ClusterService extends GetxService {
     }).toString();
   }
 
-  Future<void> startWorker() async {
+  Future<void> startWorker({bool gpu = false, int? threads}) async {
     if (Platform.isAndroid) {
       // Unrestricted battery keeps Android (Samsung especially) from moving
       // the worker to slow cores once it gets busy.
@@ -182,7 +189,7 @@ class ClusterService extends GetxService {
     }
     _workerRequested.value = true;
     worker.value = const ClusterWorkerStatus(state: 'starting');
-    await LlamaCluster.startWorker();
+    await LlamaCluster.startWorker(gpu: gpu, threads: threads);
     _watchWorker();
   }
 
@@ -353,6 +360,21 @@ class ClusterService extends GetxService {
   Future<int> applyForNextLoad(String modelPath, {String? modelName}) async {
     split.clear();
     if (!isSupported) return 0;
+    final forced = adminWorkers;
+    if (forced != null) {
+      if (forced.isEmpty) {
+        await LlamaCluster.clear();
+        return 0;
+      }
+      for (final w in forced) {
+        if (!await LlamaCluster.probe(w.endpoint)) {
+          throw Exception('Bench: worker ${w.endpoint} is unreachable');
+        }
+      }
+      await LlamaCluster.setCluster(forced,
+          weights: adminWeights, localWeight: adminLocalWeight);
+      return forced.length;
+    }
     if (!enabled.value || workers.isEmpty) {
       await LlamaCluster.clear();
       return 0;
@@ -368,7 +390,13 @@ class ClusterService extends GetxService {
     }
 
     final modelMb = await File(modelPath).length() / (1024 * 1024);
-    final needMb = modelMb * 1.1; // + KV cache and working buffers
+    // + working buffers, + the KV cache for the configured context (from the
+    // GGUF header; sliding-window and shared-KV aware).
+    final ctx = _hive.getSetting<int>(AppConstants.keyContextSize) ??
+        AppConstants.defaultContextSize;
+    final gguf = await readGgufInfo(modelPath);
+    final kvMb = gguf == null ? 0.0 : gguf.kvCacheBytes(ctx) / (1024 * 1024);
+    final needMb = modelMb * 1.1 + kvMb;
     _localSpeed ??= await LlamaCluster.benchmark();
     // Free RAM: workers report theirs when they start. The master also runs
     // the app and the KV cache, so it offers less of its own.

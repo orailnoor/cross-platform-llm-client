@@ -4,6 +4,7 @@ import 'dart:io' show Platform, Directory, File;
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
+import 'generation_options.dart';
 
 /// Whether the current platform supports local inference.
 bool get supportsLocalInference => Platform.isAndroid || Platform.isIOS;
@@ -46,7 +47,17 @@ class InferenceEngine {
   bool _isLiteRt = false;
   // GGUF model loaded together with a working vision projector.
   bool _ggufVisionLoaded = false;
-  bool get ggufVisionLoaded => _ggufVisionLoaded;
+  // Lazy vision: projector found but only loaded on the first image request.
+  String? _pendingMmprojPath;
+  int _threads = 4;
+  bool get ggufVisionLoaded => _ggufVisionLoaded || _pendingMmprojPath != null;
+
+  /// Stats of the last generation (exact token counts for GGUF).
+  GenerationStats? lastStats;
+
+  /// MTP draft head status after the last GGUF load ('' when not requested).
+  String mtpStatus = '';
+  bool get isLiteRt => _isLiteRt;
   bool _disposed = false;
   bool _hasLoadedModel = false;
   String? _liteConversationSystemPrompt;
@@ -68,9 +79,24 @@ class InferenceEngine {
     bool enableLiteRtVision = false,
     bool allowGgufGpu = true,
     String? mmprojPath,
+    bool lazyVision = false,
+    bool mtpEnabled = false,
+    String? mtpDraftPath,
+    int mtpDraftTokens = 3,
+    Map<String, dynamic>? engineOptions,
     void Function(double)? onProgress,
   }) async {
     _disposed = false;
+    if (engineOptions != null) {
+      try {
+        await LlamaCluster.setEngineOptions(engineOptions);
+        print('[Inference] Engine settings: $engineOptions');
+      } catch (e) {
+        print('[Inference] Engine settings not applied: $e');
+      }
+    }
+    _pendingMmprojPath = null;
+    mtpStatus = '';
     final runtime = _runtimeFor(modelPath, modelRuntime);
     if (runtime == 'litert') {
       return _loadLiteRtModel(
@@ -157,6 +183,9 @@ class InferenceEngine {
                   : 3;
     }
 
+    final settingThreads = engineOptions?['threads'];
+    if (settingThreads is int && settingThreads > 0) threads = settingThreads;
+
     // Google Tensor SoC (Pixel 6/7/8) has known Q4_K_M dequant bugs
     // that corrupt logits at >1 thread on Gemma models. Force single-threaded
     // to eliminate KV cache races in the quantization dot-product path.
@@ -177,17 +206,40 @@ class InferenceEngine {
     } catch (_) {}
 
     // ── Load ──
+    _threads = threads;
+    final lazy = lazyVision && mmprojPath != null;
+    // MTP from the model's own NextN layers needs them loaded with it.
+    try {
+      await LlamaExt.setLoadMtp(mtpEnabled && mtpDraftPath == null,
+          nDraft: mtpDraftTokens);
+    } catch (_) {}
     final visionError = await _controller!.loadModel(
       modelPath: modelPath,
       threads: threads,
       contextSize: contextSize,
       gpuLayers: gpuLayers,
-      mmprojPath: mmprojPath,
+      mmprojPath: lazy ? null : mmprojPath,
     );
     _hasLoadedModel = true;
-    _ggufVisionLoaded = mmprojPath != null && visionError == null;
+    _ggufVisionLoaded = !lazy && mmprojPath != null && visionError == null;
+    if (lazy) {
+      _pendingMmprojPath = mmprojPath;
+      print('[Inference] Vision projector deferred until the first image');
+    }
     if (visionError != null) {
       print('[Inference] Vision projector not loaded: $visionError');
+    }
+    if (mtpEnabled) {
+      try {
+        final err = await LlamaExt.loadMtp(mtpDraftPath ?? '',
+            nDraft: mtpDraftTokens);
+        mtpStatus = err == null
+            ? 'MTP on (${mtpDraftPath == null ? 'NextN layers' : mtpDraftPath.split('/').last}, draft $mtpDraftTokens)'
+            : 'MTP off: $err';
+      } catch (e) {
+        mtpStatus = 'MTP off: $e';
+      }
+      print('[Inference] $mtpStatus');
     }
 
     final accel = gpuLayers > 0
@@ -344,8 +396,10 @@ class InferenceEngine {
     String? imagePath,
     String? audioPath,
     String source = 'chat',
+    GenerationOptions options = GenerationOptions.none,
     void Function(String token)? onToken,
   }) async {
+    lastStats = null;
     if (_isLiteRt) {
       return _generateLiteRt(
         prompt: prompt,
@@ -361,6 +415,24 @@ class InferenceEngine {
     }
 
     if (_controller == null) throw Exception('No model loaded');
+    if (imagePath != null &&
+        imagePath.isNotEmpty &&
+        !_ggufVisionLoaded &&
+        _pendingMmprojPath != null) {
+      // Lazy vision: load the projector now and keep it.
+      final path = _pendingMmprojPath!;
+      _pendingMmprojPath = null;
+      try {
+        final err = await LlamaExt.loadMmproj(path, threads: _threads);
+        _ggufVisionLoaded = err == null;
+        if (err != null) print('[Inference] Lazy vision load failed: $err');
+      } catch (e) {
+        print('[Inference] Lazy vision load failed: $e');
+      }
+      if (!_ggufVisionLoaded) {
+        return 'ERROR: The vision file could not be loaded for this model.';
+      }
+    }
     if (imagePath != null && imagePath.isNotEmpty && !_ggufVisionLoaded) {
       return 'This model can\'t read images. Load a vision model (one marked '
           'Vision in Models) to ask about photos.';
@@ -397,24 +469,61 @@ class InferenceEngine {
       finish(buffer.toString());
     };
 
+    // Per-request grammar (structured output). A grammar staged by
+    // chatPrepare is kept; otherwise clear any leftover one.
+    if (!options.grammarStaged) {
+      try {
+        await LlamaExt.setGrammar(options.grammar ?? '');
+      } catch (_) {}
+    }
+    final topP = options.topP ?? 0.9;
+    final topK = options.topK ?? 40;
+    final minP = options.minP ?? 0.05;
+    final repeatPenalty = options.repeatPenalty ?? 1.1;
+    final frequencyPenalty = options.frequencyPenalty ?? 0.0;
+    final presencePenalty = options.presencePenalty ?? 0.0;
+
     // ── Use generateChat() for native template handling ──
     Stream<String>? stream;
     try {
-      final messages = _buildChatMessages(
-          prompt, conversationHistory, systemPrompt,
-          imagePath: imagePath);
-      stream = _controller!.generateChat(
-        messages: messages,
-        template: null,
-        maxTokens: maxTokens,
-        temperature: temperature,
-        topP: 0.9,
-        topK: 40,
-        minP: 0.05,
-        repeatPenalty: 1.1,
-        repeatLastN: 64,
-      );
-      print('[Inference] generateChat() started (${messages.length} messages)');
+      if (options.rawPrompt) {
+        // OpenAI /v1/completions or a prompt already rendered by the
+        // model's Jinja template: no chat template.
+        stream = _controller!.generate(
+          prompt: prompt,
+          maxTokens: maxTokens,
+          temperature: temperature,
+          topP: topP,
+          topK: topK,
+          minP: minP,
+          repeatPenalty: repeatPenalty,
+          frequencyPenalty: frequencyPenalty,
+          presencePenalty: presencePenalty,
+          repeatLastN: 64,
+          seed: options.seed,
+        );
+        print('[Inference] raw generate() started');
+      } else {
+        final messages = _buildChatMessages(
+            prompt, conversationHistory, systemPrompt,
+            imagePath: imagePath);
+        stream = _controller!.generateChat(
+          messages: messages,
+          template: null,
+          maxTokens: maxTokens,
+          temperature: temperature,
+          topP: topP,
+          topK: topK,
+          minP: minP,
+          repeatPenalty: repeatPenalty,
+          frequencyPenalty: frequencyPenalty,
+          presencePenalty: presencePenalty,
+          repeatLastN: 64,
+          seed: options.seed,
+        );
+        print(
+            '[Inference] generateChat() started (${messages.length} messages)');
+      }
     } catch (e) {
       print('[Inference] generateChat() failed: $e — fallback to generate()');
       try {
@@ -455,8 +564,11 @@ class InferenceEngine {
         tokenCount++;
         onToken?.call(clean);
       },
-      onDone: () {
+      onDone: () async {
         print('[Inference] Stream onDone — $tokenCount tokens total');
+        try {
+          lastStats = GenerationStats.fromNative(await LlamaExt.lastStats());
+        } catch (_) {}
         finish(buffer.toString(), stopNative: false);
       },
       onError: (error) {
@@ -739,6 +851,43 @@ class InferenceEngine {
     }
     // llama.cpp (GGUF) is stateless per-generation — no native
     // conversation object to reset.
+  }
+
+  // ── GGUF extensions (LlamaExt) ──
+
+  Future<GenerationStats?> nativeStats() async {
+    if (_isLiteRt || _controller == null) return null;
+    try {
+      return GenerationStats.fromNative(await LlamaExt.lastStats());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<int>> tokenize(String text,
+          {bool addSpecial = true, bool parseSpecial = true}) =>
+      LlamaExt.tokenize(text, addSpecial: addSpecial, parseSpecial: parseSpecial);
+
+  Future<String> detokenize(List<int> tokens) => LlamaExt.detokenize(tokens);
+
+  Future<List<double>> embed(String text) => LlamaExt.embed(text);
+
+  Future<Map<String, dynamic>> chatPrepare(Map<String, dynamic> request) =>
+      LlamaExt.chatPrepare(request);
+
+  Future<Map<String, dynamic>> chatParse(String text) =>
+      LlamaExt.chatParse(text);
+
+  Future<String> jsonSchemaToGrammar(Object schema) =>
+      LlamaExt.jsonSchemaToGrammar(schema);
+
+  Future<Map<String, dynamic>> mtpInfo() async {
+    if (_isLiteRt || _controller == null) return const {};
+    try {
+      return await LlamaExt.mtpInfo();
+    } catch (_) {
+      return const {};
+    }
   }
 
   Future<ContextInfo?> getContextInfo() async {

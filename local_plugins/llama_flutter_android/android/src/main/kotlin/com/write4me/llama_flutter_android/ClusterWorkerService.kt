@@ -41,6 +41,7 @@ class ClusterWorkerService : Service() {
         const val ACTION_STOP = "com.write4me.llama_flutter_android.STOP_CLUSTER_WORKER"
         const val EXTRA_PORT = "port"
         const val EXTRA_THREADS = "threads"
+        const val EXTRA_GPU = "gpu"
         const val DEFAULT_PORT = 50052
         const val SERVICE_TYPE = "_privatelm._tcp."
         const val PROCESS_SUFFIX = ":cluster"
@@ -92,6 +93,7 @@ class ClusterWorkerService : Service() {
         val port = intent?.getIntExtra(EXTRA_PORT, DEFAULT_PORT) ?: DEFAULT_PORT
         val threads = intent?.getIntExtra(EXTRA_THREADS, 0)?.takeIf { it > 0 }
             ?: ClusterNative.fastCoreCount()
+        val useGpu = intent?.getBooleanExtra(EXTRA_GPU, false) ?: false
         acquireLocks()
         writeStatus("starting")
 
@@ -109,7 +111,8 @@ class ClusterWorkerService : Service() {
                 applicationInfo.nativeLibraryDir,
                 "0.0.0.0:$port",
                 cacheDir.absolutePath,
-                threads.toLong()
+                threads.toLong(),
+                useGpu
             )
             Log.e(TAG, "Worker exited: $error")
             writeStatus("error", error = error ?: "Worker stopped")

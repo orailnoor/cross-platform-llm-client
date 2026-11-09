@@ -24,6 +24,10 @@ class HiveService extends GetxService {
       AppConstants.keyServerApiKey,
       AppConstants.keyServerUseApiKey,
       AppConstants.keyServerAllowNetwork,
+      AppConstants.keyServerPort,
+      AppConstants.keyServerKeepAwake,
+      AppConstants.keyServerEmbeddings,
+      AppConstants.keyServerNoApiKey,
     };
     final obsoleteServerKeys = _settingsBox.keys.where((key) =>
         key is String &&

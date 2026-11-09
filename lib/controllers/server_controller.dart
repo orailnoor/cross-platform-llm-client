@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:llama_flutter_android/llama_flutter_android.dart' show LlamaExt;
 
 import '../core/constants.dart';
 import '../core/ui.dart';
@@ -31,9 +32,18 @@ class ServerController extends GetxController {
   /// devices on the network can reach it and an API key is always required.
   final allowNetwork = false.obs;
 
+  /// Off by default. When on, the server never asks for an API key — also
+  /// when other devices on the network can reach it (like OlliteRT).
+  final noApiKey = false.obs;
+
   late final TextEditingController apiKeyCtrl;
 
-  static const int port = 8080;
+  /// Port of the API server (setting server_port, default 8080).
+  static int get port =>
+      (Get.isRegistered<HiveService>()
+              ? Get.find<HiveService>().getSetting<int>(AppConstants.keyServerPort)
+              : null) ??
+      AppConstants.defaultServerPort;
 
   @override
   void onInit() {
@@ -43,11 +53,14 @@ class ServerController extends GetxController {
     apiKey.value = _hive.getSetting<String>(AppConstants.keyServerApiKey) ?? '';
     allowNetwork.value =
         _hive.getSetting<bool>(AppConstants.keyServerAllowNetwork) ?? false;
+    noApiKey.value =
+        _hive.getSetting<bool>(AppConstants.keyServerNoApiKey) ?? false;
 
     apiKeyCtrl = TextEditingController(text: apiKey.value);
   }
 
-  bool get requiresApiKey => allowNetwork.value || useApiKey.value;
+  bool get requiresApiKey =>
+      !noApiKey.value && (allowNetwork.value || useApiKey.value);
 
   String? get _effectiveApiKey {
     final key = apiKey.value.trim();
@@ -68,13 +81,18 @@ class ServerController extends GetxController {
     }
   }
 
-  Future<void> startServer() async {
+  /// [silent]: started by the app itself (start on launch/boot), so no
+  /// toasts. A model unloaded by keep-alive counts as loaded (it reloads on
+  /// the next request).
+  Future<void> startServer({bool silent = false}) async {
     if (isRunning.value || isStarting.value) return;
     lastError.value = null;
-    if (!hasLocalModel) {
+    if (!hasLocalModel && !inference.isIdleUnloaded) {
       lastError.value = 'Load a local GGUF or LiteRT-LM model first.';
-      showToast('Server not started', lastError.value!,
-          tone: ToastTone.warning);
+      if (!silent) {
+        showToast('Server not started', lastError.value!,
+            tone: ToastTone.warning);
+      }
       return;
     }
 
@@ -87,11 +105,13 @@ class ServerController extends GetxController {
         port: port,
         apiKey: _effectiveApiKey,
         allowNetwork: allowNetwork.value,
+        allowNoKey: noApiKey.value,
         onLog: (message) => serverStatus.value = message,
       );
       localUrl.value = _server.localUrl;
       isRunning.value = true;
       serverStatus.value = 'Server running';
+      await _setKeepAwake(true);
       if (allowNetwork.value && Get.isRegistered<ClusterService>()) {
         Get.find<ClusterService>().serving.value = true;
       }
@@ -99,7 +119,7 @@ class ServerController extends GetxController {
       lastError.value = '$e';
       serverStatus.value = 'Server failed';
       Get.find<AppLogService>().error('API server failed', details: e);
-      showToast('Server failed', '$e', tone: ToastTone.error);
+      if (!silent) showToast('Server failed', '$e', tone: ToastTone.error);
     } finally {
       isStarting.value = false;
     }
@@ -108,6 +128,7 @@ class ServerController extends GetxController {
   Future<void> stopServer() async {
     isStarting.value = false;
     await _server.stop();
+    await _setKeepAwake(false);
     isRunning.value = false;
     localUrl.value = null;
     serverStatus.value = 'Server stopped';
@@ -131,8 +152,15 @@ class ServerController extends GetxController {
   }
 
   Future<void> setUseApiKey(bool enabled) async {
-    if (!enabled && allowNetwork.value) return;
+    if (!enabled && allowNetwork.value && !noApiKey.value) return;
     useApiKey.value = enabled;
+    await saveSettings();
+  }
+
+  /// "No API key": serve without authentication, even on the network.
+  Future<void> setNoApiKey(bool enabled) async {
+    noApiKey.value = enabled;
+    await _hive.setSetting(AppConstants.keyServerNoApiKey, enabled);
     await saveSettings();
   }
 
@@ -175,6 +203,37 @@ class ServerController extends GetxController {
   Future<void> copyText(String text, String label) async {
     await Clipboard.setData(ClipboardData(text: text));
     showToast('Copied', '$label copied.', tone: ToastTone.success);
+  }
+
+  /// Foreground service + partial wake lock + high-performance Wi-Fi lock
+  /// while the server runs (setting server_keep_awake, off by default).
+  Future<void> _setKeepAwake(bool on) async {
+    if (!GetPlatform.isAndroid) return;
+    final enabled =
+        _hive.getSetting<bool>(AppConstants.keyServerKeepAwake) ?? false;
+    if (on && !enabled) return;
+    try {
+      await LlamaExt.keepAwake(on,
+          title: 'PrivateLM API server running',
+          text: localUrl.value ?? 'http://localhost:$port');
+    } catch (e) {
+      Get.find<AppLogService>().warning('Keep-awake failed', details: e);
+    }
+  }
+
+  /// Re-applies the keep-awake setting to a running server.
+  Future<void> refreshKeepAwake() async {
+    if (!isRunning.value) return;
+    final enabled =
+        _hive.getSetting<bool>(AppConstants.keyServerKeepAwake) ?? false;
+    await _setKeepAwake(enabled);
+  }
+
+  /// Restarts a running server (port or bind address changed).
+  Future<void> restartIfRunning() async {
+    if (!isRunning.value) return;
+    await stopServer();
+    await startServer();
   }
 
   String get baseUrl => localUrl.value ?? 'http://localhost:$port';

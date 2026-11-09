@@ -18,19 +18,86 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <sys/system_properties.h>
 #include <setjmp.h>
 #include <signal.h>
 #include "llama.cpp/include/llama.h"
 #include "llama.cpp/ggml/include/ggml-backend.h"
 #include "llama.cpp/ggml/include/gguf.h"
+#include "llama.cpp/ggml/include/ggml-cpu.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+// llama.cpp common/ subset (llama_common_lite): chat templates + tool calls,
+// JSON-schema grammars, speculative decoding (MTP).
+#include "common.h"
+#include "chat.h"
+#include "sampling.h"
+#include "speculative.h"
+#include "json-schema-to-grammar.h"
+#include <nlohmann/json.hpp>
+#include "llama.cpp/src/llama-ext.h"
 #define LOG_TAG "LlamaJNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static llama_model* g_model = nullptr;
 static llama_context* g_ctx = nullptr;
+// Persistent compute threadpool pinned to chosen cores (debug.privatelm.cpumask,
+// hex bitmask of CPU ids, e.g. f0 = cpu4-7). Only the ggml compute threads are
+// pinned; UI/driver threads stay wherever the scheduler puts them.
+static ggml_threadpool* g_threadpool = nullptr;
+// The CPU backend is a runtime-loaded module (GGML_BACKEND_DL), so resolve its
+// threadpool functions through the backend registry instead of linking them.
+typedef ggml_threadpool* (*tp_new_fn)(ggml_threadpool_params*);
+typedef void (*tp_free_fn)(ggml_threadpool*);
+static void* cpuProc(const char* name) {
+    ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    ggml_backend_reg_t reg = cpu ? ggml_backend_dev_backend_reg(cpu) : nullptr;
+    return reg ? ggml_backend_reg_get_proc_address(reg, name) : nullptr;
+}
+
+static void freeThreadpool() {
+    if (g_threadpool) {
+        if (g_ctx) llama_detach_threadpool(g_ctx);
+        if (auto f = (tp_free_fn)cpuProc("ggml_threadpool_free")) f(g_threadpool);
+        g_threadpool = nullptr;
+    }
+}
+
+// App setting "CPU cores" (hex mask); the debug property overrides it.
+static std::string g_cpumask_setting;
+
+static void attachPinnedThreadpool(int n_threads) {
+    char mask[PROP_VALUE_MAX] = {0}, poll[PROP_VALUE_MAX] = {0};
+    if (__system_property_get("debug.privatelm.cpumask", mask) <= 0 || !mask[0]) {
+        strncpy(mask, g_cpumask_setting.c_str(), sizeof(mask) - 1);
+    }
+    bool have_mask = mask[0] && strcmp(mask, "0") != 0;
+    bool have_poll = __system_property_get("debug.privatelm.poll", poll) > 0 && poll[0];
+    if (!have_mask && !have_poll) return;
+    ggml_threadpool_params tpp = ggml_threadpool_params_default(n_threads);
+    if (have_mask) {
+        unsigned long long bits = strtoull(mask, nullptr, 16);
+        // More threads than pinned cores makes spinning threads share a core
+        // and nearly stalls decoding; never run more threads than cores.
+        const int cores = __builtin_popcountll(bits);
+        if (cores > 0 && n_threads > cores) {
+            LOGI("threadpool: %d threads > %d cores in mask %s, using %d", n_threads, cores, mask, cores);
+            n_threads = cores;
+            llama_set_n_threads(g_ctx, n_threads, n_threads);
+            tpp = ggml_threadpool_params_default(n_threads);
+        }
+        for (int c = 0; c < 64 && c < GGML_MAX_N_THREADS; c++) tpp.cpumask[c] = (bits >> c) & 1ULL;
+        tpp.strict_cpu = true;  // thread i -> i-th set bit
+    }
+    if (have_poll) tpp.poll = (uint32_t)atoi(poll);
+    auto tp_new = (tp_new_fn)cpuProc("ggml_threadpool_new");
+    if (!tp_new) { LOGI("threadpool: ggml_threadpool_new not exported by CPU backend"); return; }
+    g_threadpool = tp_new(&tpp);
+    if (g_threadpool) llama_attach_threadpool(g_ctx, g_threadpool, nullptr);
+    LOGI("threadpool: n=%d cpumask=%s strict=%d poll=%u -> %p", n_threads, have_mask ? mask : "-",
+         (int)tpp.strict_cpu, tpp.poll, (void*)g_threadpool);
+}
 static const llama_vocab* g_vocab = nullptr;
 static llama_sampler* g_sampler = nullptr;
 static std::atomic<bool> g_stop_flag{false};
@@ -53,6 +120,113 @@ static bool g_capture_load_error = false;
 static std::string g_load_buffers;
 // Cluster worker: address of the master currently connected, empty if none.
 static std::string g_worker_peer;
+// Every "... buffer size = X MiB" line (weights, KV, compute) of the last
+// load, for the bench API's memory report.
+static std::string g_mem_log;
+
+// ---------------------------------------------------------------------------
+// Engine options (bench build). Set before a load through ClusterChannel;
+// -1 / empty means "keep the app's default".
+// ---------------------------------------------------------------------------
+struct EngineOptions {
+    int swa_full = 0;          // 0: SWA layers keep only their window (much less KV)
+    int flash_attn = -1;       // -1 auto, 0 off, 1 on
+    std::string type_k;        // "f16", "q8_0", "q4_0" (empty: f16)
+    std::string type_v;
+    int threads = -1;
+    int n_batch = -1;
+    int n_ubatch = -1;
+    int gpu_layers = -1;       // layers on this phone's GPU (single or cluster)
+    int local_layers = -1;     // cluster: blocks kept on this phone (CPU+GPU)
+    int op_offload = -1;
+    int repack = -1;           // 0: no CPU weight repacking (no anonymous copy)
+};
+static EngineOptions g_opt;
+
+// ---------------------------------------------------------------------------
+// Extensions (LlamaExtNative): per-request grammar, generation stats, MTP
+// speculative decoding, Jinja chat templates with tool calls, embeddings,
+// tokenize/detokenize. Everything that touches g_ctx takes g_ctx_mutex so an
+// embeddings/tokenize call can't run inside a generation or a model free.
+// ---------------------------------------------------------------------------
+static std::mutex g_ctx_mutex;
+
+/// Grammar for the next nativeGenerate call only (consumed there).
+struct StagedGrammar {
+    std::string grammar;                    // GBNF, root rule "root"
+    bool lazy = false;                      // only enforced after a trigger
+    std::vector<std::string> trigger_patterns;
+    std::vector<llama_token> trigger_tokens;
+    std::vector<llama_token> prefill_tokens; // fed to a non-lazy grammar first
+};
+static std::mutex g_staged_mutex;
+static StagedGrammar g_staged_grammar;
+
+/// What the last nativeGenerate call did (for OpenAI usage/finish_reason and
+/// the bench API's MTP acceptance numbers).
+struct GenStats {
+    int prompt_tokens = 0;
+    int cached_tokens = 0;      // prompt tokens reused from the KV cache
+    int completion_tokens = 0;
+    std::string finish = "none"; // stop | length | abort | error
+    int draft_steps = 0;         // MTP: draft calls that produced tokens
+    int drafted = 0;             // MTP: draft tokens proposed
+    int accepted = 0;            // MTP: draft tokens accepted
+    double prompt_ms = 0;
+    double gen_ms = 0;
+    bool mtp = false;
+};
+static GenStats g_last_stats;
+
+// MTP draft head (speculative decoding). Either a separate draft GGUF (e.g.
+// Gemma 4 "gemma4-assistant", sharing the target's KV cache) or the target
+// model's own NextN layers.
+static llama_model* g_mtp_model = nullptr;   // null when using in-model layers
+static llama_context* g_mtp_ctx = nullptr;
+static common_speculative* g_spec = nullptr;
+static int g_mtp_n_draft = 3;
+static bool g_mtp_enabled = true;            // runtime switch while loaded
+static long long g_mtp_total_drafted = 0;
+static long long g_mtp_total_accepted = 0;
+static bool g_load_mtp_layers = false;       // next load: load NextN layers
+static int g_load_rs_seq = 0;                // next load: recurrent snapshots
+
+// How the current model was loaded, so a draft model can match it.
+static std::vector<ggml_backend_dev_t> g_load_devices;  // without terminator
+static int g_load_n_gpu_layers = 0;
+static bool g_load_cluster = false;
+static llama_context_params g_load_cparams;
+
+// Jinja chat templates of the loaded model, plus the parser state of the last
+// nativeChatPrepare call (used by nativeChatParse).
+static common_chat_templates_ptr g_chat_tmpls;
+static bool g_chat_tmpls_tried = false;
+static common_chat_params g_chat_params;
+static bool g_chat_params_valid = false;
+
+static void freeMtpLocked() {
+    if (g_spec) {
+        common_speculative_free(g_spec);
+        g_spec = nullptr;
+    }
+    if (g_mtp_ctx) {
+        llama_free(g_mtp_ctx);
+        g_mtp_ctx = nullptr;
+    }
+    if (g_mtp_model) {
+        llama_model_free(g_mtp_model);
+        g_mtp_model = nullptr;
+    }
+    if (g_ctx) llama_set_embeddings_nextn(g_ctx, false, false);
+}
+
+static ggml_type parseKvType(const std::string& s, ggml_type fallback) {
+    if (s == "f16") return GGML_TYPE_F16;
+    if (s == "q8_0") return GGML_TYPE_Q8_0;
+    if (s == "q4_0") return GGML_TYPE_Q4_0;
+    if (s == "f32") return GGML_TYPE_F32;
+    return fallback;
+}
 
 // ---------------------------------------------------------------------------
 // Runtime backend loading (GGML_BACKEND_DL)
@@ -164,14 +338,29 @@ static void loadCpuBackendLocked() {
     }
 }
 
+// OpenCL is only loaded when asked for explicitly (bench gpu_layers, a GPU
+// worker, or the device list): on Adreno 6xx with Q4_K models it is slower
+// than the CPU, so the app's automatic GPU choice must not pick it up.
+static bool g_allow_opencl = false;
+
 static bool loadGpuBackendLocked() {
     if (g_gpu_backend_loaded) return true;
-    const std::string path = g_lib_dir + "/libggml-vulkan.so";
-    if (ggml_backend_load(path.c_str())) {
-        g_gpu_backend_loaded = true;
-        LOGI("Vulkan backend loaded");
-    } else {
-        LOGE("Vulkan backend unavailable (%s)", path.c_str());
+    // Bench build: OpenCL (Qualcomm's Adreno backend) first, then Vulkan.
+    // ggml-opencl rejects non-Adreno GPUs at init, so on Mali it registers
+    // no device and Vulkan (if shipped) is tried next.
+    for (const char* lib : {"libggml-opencl.so", "libggml-vulkan.so"}) {
+        const std::string path = g_lib_dir + "/" + lib;
+        if (!g_allow_opencl && std::strcmp(lib, "libggml-opencl.so") == 0) continue;
+        if (access(path.c_str(), F_OK) != 0) continue;
+        if (ggml_backend_reg_t reg = ggml_backend_load(path.c_str())) {
+            LOGI("GPU backend %s loaded (%zu device(s))", lib, ggml_backend_reg_dev_count(reg));
+            if (ggml_backend_reg_dev_count(reg) > 0) {
+                g_gpu_backend_loaded = true;
+                break;
+            }
+        } else {
+            LOGE("GPU backend unavailable (%s)", path.c_str());
+        }
     }
     return g_gpu_backend_loaded;
 }
@@ -295,6 +484,20 @@ static std::string planCluster(const char* model_path, ClusterPlan& plan) {
     const int n_layer = readBlockCount(model_path);
     if (n_layer <= 0) return "Could not read the model's layer count";
 
+    // This phone's GPU, if the bench options ask for GPU layers. It goes
+    // first in the device list: llama.cpp gives the earliest offloaded
+    // blocks to the first device, so the order is master CPU -> master GPU
+    // -> workers, and only one Wi-Fi hop per worker is added.
+    ggml_backend_dev_t local_gpu = nullptr;
+    if (g_opt.gpu_layers > 0) {
+        {
+            std::lock_guard<std::mutex> lock(g_backend_mutex);
+            loadGpuBackendLocked();
+        }
+        local_gpu = firstGpuDevice();
+        if (!local_gpu) LOGE("Cluster: GPU layers requested but no local GPU device");
+    }
+
     float remote_weight = 0.0f;
     std::vector<float> device_weights;
     for (size_t i = 0; i < endpoints.size(); i++) {
@@ -315,19 +518,34 @@ static std::string planCluster(const char* model_path, ClusterPlan& plan) {
         remote_weight += std::max(weights[i], 0.01f);
     }
     if (plan.devices.empty()) return "No cluster workers";
-    plan.devices.push_back(nullptr);
-
-    plan.split.assign(llama_max_devices(), 0.0f);
-    for (size_t d = 0; d < device_weights.size() && d < plan.split.size(); d++) {
-        plan.split[d] = device_weights[d];
-    }
 
     // llama.cpp offloads the *last* n_gpu_layers blocks (+1 for the output
     // layer), so keeping `local` blocks here means offloading the rest.
     const float total = std::max(local_weight, 0.0f) + remote_weight;
-    int local = (int)std::lround(n_layer * std::max(local_weight, 0.0f) / total);
+    int local = g_opt.local_layers >= 0
+        ? g_opt.local_layers
+        : (int)std::lround(n_layer * std::max(local_weight, 0.0f) / total);
     local = std::clamp(local, 0, n_layer);
-    plan.n_gpu_layers = n_layer + 1 - local;
+    const int remote_layers = n_layer - local;
+    const int gpu_layers = local_gpu ? std::clamp(g_opt.gpu_layers, 0, local) : 0;
+    const int cpu_layers = local - gpu_layers;
+    plan.n_gpu_layers = n_layer + 1 - cpu_layers;
+
+    // tensor_split is normalised, so weights in layers give an exact split:
+    // the GPU takes `gpu_layers`, workers share `remote_layers` by weight.
+    for (auto& w : device_weights) w = w / remote_weight * (float)remote_layers;
+    // llama.cpp splits n_gpu_layers = blocks + 1 (output slot) by these
+    // fractions; the output slot counts toward the last device.
+    if (!device_weights.empty()) device_weights.back() += 1.0f;
+    if (local_gpu) {
+        plan.devices.insert(plan.devices.begin(), local_gpu);
+        device_weights.insert(device_weights.begin(), (float)gpu_layers);
+    }
+    plan.devices.push_back(nullptr);
+    plan.split.assign(llama_max_devices(), 0.0f);
+    for (size_t d = 0; d < device_weights.size() && d < plan.split.size(); d++) {
+        plan.split[d] = device_weights[d];
+    }
 
     // The output layer goes with the last offloaded layer, i.e. a worker.
     // It's the biggest single matmul per token (vocab x hidden) and its
@@ -338,9 +556,54 @@ static std::string planCluster(const char* model_path, ClusterPlan& plan) {
         plan.overrides[0] = {"^(output|token_embd)\\.weight$", ggml_backend_dev_buffer_type(cpu)};
         plan.overrides[1] = {nullptr, nullptr};
     }
-    LOGI("Cluster: %d of %d layers local, rest on %zu worker device(s), output layer local",
-         local, n_layer, device_weights.size());
+    LOGI("Cluster: %d of %d layers local (%d CPU, %d GPU), %d on %zu worker device(s), output layer local",
+         local, n_layer, cpu_layers, gpu_layers, remote_layers,
+         device_weights.size() - (local_gpu ? 1 : 0));
     return {};
+}
+
+// Master side of the Wi-Fi keep-awake (bench build). Workers already ping
+// the master every 20 ms, which keeps the *worker's* radio up; an otherwise
+// idle master (S21) still dozes between tokens, adding 100-300 ms wake-ups to
+// every round trip. So the master pings each worker host the same way.
+static std::atomic<bool> g_master_keepalive{false};
+static std::mutex g_keepalive_mutex;
+static std::vector<std::string> g_keepalive_hosts;
+
+/// Bench toggle for the radio keep-awake pings, re-read every tick so it
+/// switches live: `setprop debug.privatelm.keepalive 0|1`. Measured on the
+/// S21 + N20U pair, the master's 50 pps UDP pings collapsed the RPC TCP
+/// stream (20% retransmits, cwnd 1; tg 4.0 -> 0.8 t/s), so the master pings
+/// are off unless the property is 1. The worker pings (S21 master, N20U
+/// worker) hurt the same way (tg 3.3 -> 1.0 t/s), so they are off by default too.
+static bool keepAwakeEnabled(bool fallback) {
+    char v[PROP_VALUE_MAX] = {0};
+    if (__system_property_get("debug.privatelm.keepalive", v) <= 0) return fallback;
+    return v[0] == '1';
+}
+
+static void runMasterKeepAwake() {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return;
+    const char byte = 0;
+    while (g_master_keepalive) {
+        std::vector<std::string> hosts;
+        {
+            std::lock_guard<std::mutex> lock(g_keepalive_mutex);
+            hosts = g_keepalive_hosts;
+        }
+        for (const auto& ip : hosts) {
+            if (!keepAwakeEnabled(false)) break;
+            sockaddr_in to = {};
+            to.sin_family = AF_INET;
+            to.sin_port = htons(9);
+            if (inet_pton(AF_INET, ip.c_str(), &to.sin_addr) == 1) {
+                sendto(fd, &byte, 1, 0, (const sockaddr*)&to, sizeof(to));
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    close(fd);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -362,6 +625,18 @@ Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeSetCluster(
         env->DeleteLocalRef(item);
     }
     LOGI("Cluster set: %zu worker(s)", g_cluster_endpoints.size());
+    {
+        std::lock_guard<std::mutex> klock(g_keepalive_mutex);
+        g_keepalive_hosts.clear();
+        for (const auto& ep : g_cluster_endpoints) {
+            g_keepalive_hosts.push_back(ep.substr(0, ep.rfind(':')));
+        }
+    }
+    if (!g_cluster_endpoints.empty() && !g_master_keepalive.exchange(true)) {
+        std::thread(runMasterKeepAwake).detach();
+    } else if (g_cluster_endpoints.empty()) {
+        g_master_keepalive = false;
+    }
 }
 
 /// Where the last model load put its weights: "<buffer name>\t<MiB>" lines.
@@ -378,6 +653,150 @@ Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeWorkerPeer(
         JNIEnv* env, jobject /* this */) {
     std::lock_guard<std::mutex> lock(g_load_log_mutex);
     return g_worker_peer.empty() ? nullptr : env->NewStringUTF(g_worker_peer.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Bench build: engine options, llama-bench style measurement, memory report
+// ---------------------------------------------------------------------------
+extern "C" JNIEXPORT void JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeSetEngineOptions(
+        JNIEnv* env, jobject /* this */, jint swa_full, jint flash_attn, jstring type_k,
+        jstring type_v, jint threads, jint n_batch, jint n_ubatch, jint gpu_layers,
+        jint local_layers, jint op_offload, jint repack) {
+    std::lock_guard<std::mutex> lock(g_backend_mutex);
+    g_opt.swa_full = swa_full;
+    g_opt.flash_attn = flash_attn;
+    g_opt.type_k = jstringToStd(env, type_k);
+    g_opt.type_v = jstringToStd(env, type_v);
+    g_opt.threads = threads;
+    g_opt.n_batch = n_batch;
+    g_opt.n_ubatch = n_ubatch;
+    g_opt.gpu_layers = gpu_layers;
+    g_opt.local_layers = local_layers;
+    g_opt.op_offload = op_offload;
+    g_opt.repack = repack;
+    if (gpu_layers > 0) g_allow_opencl = true;
+    LOGI("Engine options: repack=%d", repack);
+    LOGI("Engine options: swa_full=%d fa=%d k=%s v=%s threads=%d batch=%d/%d gpu=%d local=%d op_offload=%d",
+         swa_full, flash_attn, g_opt.type_k.c_str(), g_opt.type_v.c_str(), threads,
+         n_batch, n_ubatch, gpu_layers, local_layers, op_offload);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeSetCpuMask(
+        JNIEnv* env, jobject /* this */, jstring mask) {
+    std::lock_guard<std::mutex> lock(g_backend_mutex);
+    g_cpumask_setting = jstringToStd(env, mask);
+    LOGI("Engine options: cpumask=%s", g_cpumask_setting.c_str());
+}
+
+/// Every "buffer size" line of the last load (weights, KV, compute).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeMemLog(
+        JNIEnv* env, jobject /* this */) {
+    std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    return env->NewStringUTF(g_mem_log.c_str());
+}
+
+/// Registered backend devices, one "name\tdescription\ttype\tfreeMiB\ttotalMiB" per line.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeDevices(
+        JNIEnv* env, jobject /* this */, jstring lib_dir, jboolean load_gpu) {
+    std::string out;
+    {
+        std::lock_guard<std::mutex> lock(g_backend_mutex);
+        if (g_lib_dir.empty()) g_lib_dir = jstringToStd(env, lib_dir);
+        llama_log_set(androidLlamaLog, nullptr);
+        loadCpuBackendLocked();
+        if (load_gpu == JNI_TRUE) {
+            g_allow_opencl = true;
+            loadGpuBackendLocked();
+        }
+    }
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        size_t free_b = 0, total_b = 0;
+        ggml_backend_dev_memory(dev, &free_b, &total_b);
+        out += std::string(ggml_backend_dev_name(dev)) + "\t" +
+               ggml_backend_dev_description(dev) + "\t" +
+               std::to_string((int)ggml_backend_dev_type(dev)) + "\t" +
+               std::to_string(free_b >> 20) + "\t" + std::to_string(total_b >> 20) + "\n";
+    }
+    return env->NewStringUTF(out.c_str());
+}
+
+/// llama-bench style: fills the KV cache to `depth` tokens, then times a
+/// `pp`-token prompt and `tg` single-token decodes after it. Random tokens;
+/// the chat cache is invalidated. Returns JSON.
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeBench(
+        JNIEnv* env, jobject /* this */, jint depth, jint pp, jint tg) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
+    auto err = [&](const std::string& m) {
+        return env->NewStringUTF(("{\"error\":\"" + m + "\"}").c_str());
+    };
+    if (!g_ctx || !g_model || !g_vocab) return err("no model loaded");
+    const int n_ctx = (int)llama_n_ctx(g_ctx);
+    if (depth < 0 || pp < 0 || tg < 0) return err("negative size");
+    if (depth + pp + tg > n_ctx) return err("depth+pp+tg exceeds n_ctx " + std::to_string(n_ctx));
+
+    llama_memory_t mem = llama_get_memory(g_ctx);
+    llama_memory_clear(mem, true);
+    g_cached_tokens.clear();
+    g_n_past = 0;
+
+    const int n_batch = (int)llama_n_batch(g_ctx);
+    const int n_vocab = llama_vocab_n_tokens(g_vocab);
+    uint32_t rng = 12345;
+    auto next_tok = [&]() {
+        rng = rng * 1664525u + 1013904223u;
+        return (llama_token)((rng >> 8) % (uint32_t)(n_vocab - 1) + 1);
+    };
+    llama_batch batch = llama_batch_init(std::max(n_batch, 1), 0, 1);
+    auto decode_span = [&](int start, int count) -> int {
+        for (int done = 0; done < count;) {
+            const int n = std::min(n_batch, count - done);
+            batch.n_tokens = n;
+            for (int i = 0; i < n; i++) {
+                batch.token[i] = next_tok();
+                batch.pos[i] = start + done + i;
+                batch.n_seq_id[i] = 1;
+                batch.seq_id[i][0] = 0;
+                batch.logits[i] = (i == n - 1);
+            }
+            const int rc = llama_decode(g_ctx, batch);
+            if (rc != 0) return rc;
+            done += n;
+        }
+        llama_synchronize(g_ctx);
+        return 0;
+    };
+    using clk = std::chrono::steady_clock;
+    auto secs = [](clk::time_point a, clk::time_point b) {
+        return std::chrono::duration<double>(b - a).count();
+    };
+
+    const auto t0 = clk::now();
+    int rc = decode_span(0, depth);
+    const auto t1 = clk::now();
+    if (rc == 0) rc = decode_span(depth, pp);
+    const auto t2 = clk::now();
+    if (rc == 0) {
+        for (int i = 0; i < tg && rc == 0; i++) rc = decode_span(depth + pp + i, 1);
+    }
+    const auto t3 = clk::now();
+    llama_batch_free(batch);
+    llama_memory_clear(mem, true);
+    if (rc != 0) return err("llama_decode failed rc=" + std::to_string(rc));
+
+    const double d_s = secs(t0, t1), pp_s = secs(t1, t2), tg_s = secs(t2, t3);
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "{\"n_ctx\":%d,\"depth\":%d,\"depth_s\":%.3f,\"depth_tps\":%.2f,"
+             "\"pp\":%d,\"pp_s\":%.3f,\"pp_tps\":%.2f,\"tg\":%d,\"tg_s\":%.3f,\"tg_tps\":%.2f}",
+             n_ctx, depth, d_s, depth > 0 ? depth / d_s : 0.0, pp, pp_s,
+             pp > 0 ? pp / pp_s : 0.0, tg, tg_s, tg > 0 ? tg / tg_s : 0.0);
+    return env->NewStringUTF(buf);
 }
 
 /// Memory read speed in GB/s with `threads` threads. Token generation is
@@ -426,7 +845,7 @@ static void runRadioKeepAwake(const std::atomic<bool>& running, std::string (*pe
     const char byte = 0;
     while (running) {
         const std::string ip = peer();
-        if (ip.empty()) {
+        if (ip.empty() || !keepAwakeEnabled(false)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             continue;
         }
@@ -454,7 +873,7 @@ static std::string currentWorkerPeer() {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeServe(
         JNIEnv* env, jobject /* this */, jstring lib_dir, jstring endpoint,
-        jstring cache_dir, jlong n_threads) {
+        jstring cache_dir, jlong n_threads, jboolean use_gpu) {
     ggml_backend_reg_t rpc;
     ggml_backend_dev_t cpu;
     {
@@ -464,6 +883,14 @@ Java_com_write4me_llama_1flutter_1android_ClusterNative_nativeServe(
         loadCpuBackendLocked();
         rpc = loadRpcBackendLocked();
         cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        // Bench option: serve this phone's GPU instead of its CPU.
+        if (use_gpu == JNI_TRUE) g_allow_opencl = true;
+        if (use_gpu == JNI_TRUE && loadGpuBackendLocked()) {
+            if (ggml_backend_dev_t gpu = firstGpuDevice()) {
+                LOGI("Cluster worker serves GPU %s", ggml_backend_dev_name(gpu));
+                cpu = gpu;
+            }
+        }
     }
     if (!rpc) return env->NewStringUTF("This build has no cluster (RPC) support");
     if (!cpu) return env->NewStringUTF("No CPU backend could be loaded");
@@ -520,6 +947,10 @@ static void androidLlamaLog(ggml_log_level level, const char* text, void*) {
     __android_log_write(priority, LOG_TAG, text);
 
     std::lock_guard<std::mutex> lock(g_load_log_mutex);
+    if (std::strstr(text, " buffer size = ") && g_mem_log.size() < 16384) {
+        g_mem_log.append(text);
+        if (g_mem_log.back() != '\n') g_mem_log.push_back('\n');
+    }
     if (const char* at = std::strstr(text, " model buffer size = ")) {
         // "load_tensors: <name> model buffer size = <MiB> MiB"
         const char* colon = std::strchr(text, ':');
@@ -766,6 +1197,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     }
     model_file.close();
 
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
     ensureCpuBackend();
 
     // Model parameters
@@ -803,13 +1235,61 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         if (cluster.overrides[0].pattern) {
             model_params.tensor_buft_overrides = cluster.overrides;
         }
+    } else if (g_opt.gpu_layers >= 0) {
+        // Bench option: exactly this many blocks on this phone's GPU.
+        static ggml_backend_dev_t opt_gpu_devices[] = {nullptr, nullptr};
+        if (g_opt.gpu_layers > 0) {
+            {
+                std::lock_guard<std::mutex> lock(g_backend_mutex);
+                loadGpuBackendLocked();
+            }
+            opt_gpu_devices[0] = firstGpuDevice();
+        }
+        if (opt_gpu_devices[0] && g_opt.gpu_layers > 0) {
+            model_params.devices = opt_gpu_devices;
+            model_params.n_gpu_layers = g_opt.gpu_layers;
+            LOGI("Bench: %d layers on GPU %s", g_opt.gpu_layers,
+                 ggml_backend_dev_name(opt_gpu_devices[0]));
+        } else {
+            model_params.devices = no_gpu_devices;
+            model_params.n_gpu_layers = 0;
+            if (g_opt.gpu_layers > 0) LOGE("Bench: GPU layers requested but no GPU device");
+        }
     }
+    if (g_opt.repack >= 0) model_params.use_extra_bufts = g_opt.repack != 0;
+    // Always mmap. With AUTO, a GPU device without mmap support (OpenCL)
+    // turns mmap off for the whole model, so every CPU tensor (Gemma 4's
+    // 2 GB per-layer embedding table included) is read into anonymous RAM.
+    // GPU tensors are copied out of the mapping either way.
+    model_params.load_mode = LLAMA_LOAD_MODE_MMAP;
+    // Bench toggle: `setprop debug.privatelm.lazy 0|1|2` (off/auto/on). ON keeps
+    // tensors the arch marks lazy (Gemma 4's per-layer embedding table, a
+    // GET_ROWS lookup) in the mmap'd file and reads rows on demand.
+    {
+        char v[PROP_VALUE_MAX] = {0};
+        if (__system_property_get("debug.privatelm.lazy", v) > 0 && v[0] >= '0' && v[0] <= '2') {
+            model_params.lazy_mode = (enum llama_lazy_mode)(v[0] - '0');
+        }
+        LOGI("lazy_mode=%d", (int)model_params.lazy_mode);
+    }
+    const bool uses_gpu = model_params.n_gpu_layers != 0 &&
+        model_params.devices != no_gpu_devices;
+    // MTP: models with NextN layers only get them when MTP is switched on.
+    model_params.load_mtp = g_load_mtp_layers;
+    // Remember the placement so an MTP draft model can follow it.
+    g_load_devices.clear();
+    if (model_params.devices) {
+        for (int i = 0; model_params.devices[i]; i++) g_load_devices.push_back(model_params.devices[i]);
+    }
+    g_load_n_gpu_layers = uses_gpu ? (int)model_params.n_gpu_layers : 0;
+    g_load_cluster = has_cluster;
 
     llama_log_set(androidLlamaLog, nullptr);
     {
         std::lock_guard<std::mutex> lock(g_load_log_mutex);
         g_load_error.clear();
         g_load_buffers.clear();
+        g_mem_log.clear();
         g_capture_load_error = true;
     }
 
@@ -837,9 +1317,30 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
     ctx_params.n_batch = 512;  // Process smaller batches to reduce memory spikes
     // Don't push CPU-resident tensor ops to the GPU in CPU-only mode, nor
     // over Wi-Fi to a worker in cluster mode.
-    ctx_params.op_offload = n_gpu_layers != 0 && !has_cluster;
+    ctx_params.op_offload = uses_gpu && !has_cluster;
+
+    // Bench engine options. swa_full=false keeps sliding-window layers at
+    // their window (Gemma 4 E4B: 16 KB/token of KV instead of ~56 KB).
+    ctx_params.swa_full = g_opt.swa_full != 0;
+    ctx_params.type_k = parseKvType(g_opt.type_k, ctx_params.type_k);
+    ctx_params.type_v = parseKvType(g_opt.type_v, ctx_params.type_v);
+    if (g_opt.flash_attn == 0) ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    if (g_opt.flash_attn == 1) ctx_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+    if (g_opt.threads > 0) {
+        ctx_params.n_threads = g_opt.threads;
+        ctx_params.n_threads_batch = g_opt.threads;
+    }
+    if (g_opt.n_batch > 0) ctx_params.n_batch = g_opt.n_batch;
+    if (g_opt.n_ubatch > 0) ctx_params.n_ubatch = std::min<uint32_t>(g_opt.n_ubatch, ctx_params.n_batch);
+    if (g_opt.op_offload >= 0) ctx_params.op_offload = g_opt.op_offload != 0;
+    if (g_load_mtp_layers && g_load_rs_seq > 0) ctx_params.n_rs_seq = (uint32_t)g_load_rs_seq;
+    LOGI("Context: n_ctx=%u swa_full=%d type_k=%s type_v=%s fa=%d threads=%d batch=%u/%u op_offload=%d",
+         ctx_params.n_ctx, (int)ctx_params.swa_full, ggml_type_name(ctx_params.type_k),
+         ggml_type_name(ctx_params.type_v), (int)ctx_params.flash_attn_type,
+         ctx_params.n_threads, ctx_params.n_batch, ctx_params.n_ubatch, (int)ctx_params.op_offload);
 
     // Create context (using new API)
+    g_load_cparams = ctx_params;
     g_ctx = llama_init_from_model(g_model, ctx_params);
     if (!g_ctx) {
         llama_model_free(g_model);
@@ -848,6 +1349,8 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMo
         env->ThrowNew(exception, "Failed to create context");
         return;
     }
+
+    attachPinnedThreadpool((int)ctx_params.n_threads);
 
     // Get vocab for tokenization
     g_vocab = llama_model_get_vocab(g_model);
@@ -897,6 +1400,7 @@ static void freeMtmd() {
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMmproj(
         JNIEnv* env, jobject /* this */, jstring path, jlong n_threads) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
     freeMtmd();
     if (!g_model) return env->NewStringUTF("Load the text model first");
     if (!path) return env->NewStringUTF("Vision file path is missing");
@@ -947,7 +1451,19 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jlong mirostat, jdouble mirostat_tau, jdouble mirostat_eta,
     jlong seed, jboolean penalize_newline,
     jobject token_callback) {
-    
+    // One generation at a time; also keeps embeddings/free/bench out.
+    std::unique_lock<std::mutex> ctx_lock(g_ctx_mutex);
+    using gen_clk = std::chrono::steady_clock;
+    const auto t_start = gen_clk::now();
+    g_last_stats = GenStats();
+    g_last_stats.finish = "error";
+    StagedGrammar staged;
+    {
+        std::lock_guard<std::mutex> lock(g_staged_mutex);
+        staged = std::move(g_staged_grammar);
+        g_staged_grammar = StagedGrammar();
+    }
+
     if (g_token_callback != nullptr) {
         env->DeleteGlobalRef(g_token_callback);
         g_token_callback = nullptr;
@@ -979,6 +1495,9 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         return;
     }
 
+    // MTP drafting for this reply: text turns only (image embeddings can't be
+    // fed to the draft head).
+    bool use_spec = g_spec != nullptr && g_mtp_enabled && !with_image;
     llama_batch batch = llama_batch_init(512, 0, 1);
 
     if (with_image) {
@@ -1052,6 +1571,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         }
         g_n_past = (int)new_n_past;
         g_cache_reusable = false;
+        g_last_stats.prompt_tokens = (int)n_pos;
     } else {
 
     // Never log prompt text: it is the user's conversation.
@@ -1116,7 +1636,13 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     }
     if (n_keep >= tokens.size()) n_keep = tokens.size() - 1;
     llama_memory_seq_rm(llama_get_memory(g_ctx), 0, (llama_pos)n_keep, -1);
+    if (g_spec && g_mtp_ctx && llama_get_ctx_other(g_mtp_ctx) != g_ctx) {
+        // Draft head with its own KV cache: drop what the target dropped.
+        llama_memory_seq_rm(llama_get_memory(g_mtp_ctx), 0, (llama_pos)n_keep, -1);
+    }
     g_cached_tokens.resize(n_keep);
+    g_last_stats.prompt_tokens = (int)tokens.size();
+    g_last_stats.cached_tokens = (int)n_keep;
     g_n_past = (int)n_keep;
     LOGI("Prompt: %zu tokens, %zu reused from cache, %zu to process",
          tokens.size(), n_keep, tokens.size() - n_keep);
@@ -1146,6 +1672,12 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             env->ThrowNew(exception, "Failed to decode prompt");
             return;
         }
+        // MTP: the draft head needs the target's hidden states of every
+        // prompt position (or, sharing the KV cache, just the last one).
+        if (use_spec && !common_speculative_process(g_spec, batch)) {
+            LOGE("MTP: prompt processing failed; drafting off for this reply");
+            use_spec = false;
+        }
         tokens_processed += batch_size;
     }
 
@@ -1157,14 +1689,43 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     // Create sampler chain with all parameters
     if (g_sampler) {
         llama_sampler_free(g_sampler);
+        g_sampler = nullptr;
     }
-    
+
     // Use seed or current time
     uint32_t sampler_seed = (seed >= 0) ? static_cast<uint32_t>(seed) : static_cast<uint32_t>(time(nullptr));
-    
+
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
     g_sampler = llama_sampler_chain_init(sparams);
-    
+
+    // Grammar (structured output / tool calls) goes first so every later
+    // sampler only sees tokens the grammar allows.
+    if (!staged.grammar.empty()) {
+        llama_sampler* grmr = nullptr;
+        if (staged.lazy) {
+            std::vector<const char*> pats;
+            for (const auto& p : staged.trigger_patterns) pats.push_back(p.c_str());
+            grmr = llama_sampler_init_grammar_lazy_patterns(g_vocab, staged.grammar.c_str(), "root",
+                pats.data(), pats.size(), staged.trigger_tokens.data(), staged.trigger_tokens.size());
+        } else {
+            grmr = llama_sampler_init_grammar(g_vocab, staged.grammar.c_str(), "root");
+        }
+        if (!grmr) {
+            llama_batch_free(batch);
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            env->ThrowNew(exception, "Invalid grammar for structured output");
+            return;
+        }
+        if (!staged.lazy) {
+            try {
+                for (llama_token t : staged.prefill_tokens) llama_sampler_accept(grmr, t);
+            } catch (const std::exception& e) {
+                LOGE("Grammar prefill failed: %s", e.what());
+            }
+        }
+        llama_sampler_chain_add(g_sampler, grmr);
+    }
+
     // Add penalties first (applied to logits before sampling)
     if (repeat_penalty != 1.0f || frequency_penalty != 0.0f || presence_penalty != 0.0f) {
         llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(
@@ -1175,10 +1736,10 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
             presence_penalty            // penalty_present
         ));
     }
-    
+
     // Temperature sampling
     llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(temperature));
-    
+
     // Add advanced samplers if enabled
     if (mirostat == 1) {
         llama_sampler_chain_add(g_sampler, llama_sampler_init_mirostat(
@@ -1199,20 +1760,20 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
         if (min_p > 0.0f && min_p < 1.0f) {
             llama_sampler_chain_add(g_sampler, llama_sampler_init_min_p(min_p, 1));
         }
-        
+
         if (typical_p < 1.0f) {
             llama_sampler_chain_add(g_sampler, llama_sampler_init_typical(typical_p, 1));
         }
-        
+
         if (top_k > 0) {
             llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(top_k));
         }
-        
+
         if (top_p < 1.0f) {
             llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(top_p, 1));
         }
     }
-    
+
     // Final distribution sampler
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(sampler_seed));
 
@@ -1220,62 +1781,167 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGenera
     jclass callbackClass = env->GetObjectClass(token_callback);
     jmethodID invokeMethod = env->GetMethodID(callbackClass, "invoke", "(Ljava/lang/Object;)Ljava/lang/Object;");
 
-    // Generation loop
-    LOGI("Starting generation loop: max_tokens=%lld", max_tokens);
-    for (int i = 0; i < max_tokens && !g_stop_flag; i++) {
-        llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
+    const int n_ctx_gen = llama_n_ctx(g_ctx);
+    const auto t_prompt_done = gen_clk::now();
+    g_last_stats.prompt_ms = std::chrono::duration<double, std::milli>(t_prompt_done - t_start).count();
+    g_last_stats.mtp = use_spec;
+    std::string finish = "length";
+    int n_generated = 0;
 
-        // Check for end of generation (EOS/EOD tokens)
-        if (llama_vocab_is_eog(g_vocab, new_token_id)) {
-            LOGI("EOS token detected, ending generation.");
-            break;
-        }
-
-        // Decode token to string
+    auto emit_token = [&](llama_token tok) {
         char buffer[256];
-        int32_t length = llama_token_to_piece(g_vocab, new_token_id, buffer, sizeof(buffer), 0, true);
-        std::string piece;
-        
-        if (length > 0) {
-            piece = sanitizeUTF8(buffer, length);
-        } else {
-            piece = "";
-        }
-        
-        // Call Kotlin callback
+        int32_t length = llama_token_to_piece(g_vocab, tok, buffer, sizeof(buffer), 0, true);
+        std::string piece = length > 0 ? sanitizeUTF8(buffer, length) : std::string();
         jstring token_str = env->NewStringUTF(piece.c_str());
         env->CallObjectMethod(g_token_callback, invokeMethod, token_str);
         env->DeleteLocalRef(token_str);
+        n_generated++;
+    };
 
-        // Prepare next batch
-        batch.n_tokens = 0;
-        batch.token[batch.n_tokens] = new_token_id;
-        batch.pos[batch.n_tokens] = g_n_past;  // Use the tracked position
-        batch.n_seq_id[batch.n_tokens] = 1;
-        batch.seq_id[batch.n_tokens][0] = 0;
-        batch.logits[batch.n_tokens] = true;
-        batch.n_tokens++;
+    LOGI("Starting generation loop: max_tokens=%lld mtp=%d", (long long)max_tokens, (int)use_spec);
+    if (!use_spec) {
+        // Generation loop
+        for (int i = 0; i < max_tokens; i++) {
+            if (g_stop_flag) { finish = "abort"; break; }
+            if (g_n_past >= n_ctx_gen) { finish = "length"; break; }
+            llama_token new_token_id = llama_sampler_sample(g_sampler, g_ctx, -1);
 
-        if (llama_decode(g_ctx, batch) != 0) {
-            LOGE("Failed to decode after sampling token %d", i + 1);
-            break;
+            // Check for end of generation (EOS/EOD tokens)
+            if (llama_vocab_is_eog(g_vocab, new_token_id)) {
+                LOGI("EOS token detected, ending generation.");
+                finish = "stop";
+                break;
+            }
+
+            emit_token(new_token_id);
+
+            // Prepare next batch
+            batch.n_tokens = 0;
+            batch.token[batch.n_tokens] = new_token_id;
+            batch.pos[batch.n_tokens] = g_n_past;  // Use the tracked position
+            batch.n_seq_id[batch.n_tokens] = 1;
+            batch.seq_id[batch.n_tokens][0] = 0;
+            batch.logits[batch.n_tokens] = true;
+            batch.n_tokens++;
+
+            if (llama_decode(g_ctx, batch) != 0) {
+                LOGE("Failed to decode after sampling token %d", i + 1);
+                finish = "error";
+                break;
+            }
+
+            // Update position counter after each generated token
+            g_n_past++;
+            if (g_cache_reusable) g_cached_tokens.push_back(new_token_id);
         }
-        
-        // Update position counter after each generated token
-        g_n_past++;
-        if (g_cache_reusable) g_cached_tokens.push_back(new_token_id);
+    } else {
+        // MTP speculative loop: the draft head proposes up to n_draft tokens,
+        // the target verifies them (plus one of its own) in a single decode.
+        // Every emitted token is still sampled from the target's logits.
+        const bool dft_own_kv = llama_get_ctx_other(g_mtp_ctx) != g_ctx;
+        llama_tokens draft;
+        llama_token id = llama_sampler_sample(g_sampler, g_ctx, -1);
+        while (true) {
+            if (g_stop_flag) { finish = "abort"; break; }
+            if (llama_vocab_is_eog(g_vocab, id)) { finish = "stop"; break; }
+            if (n_generated >= max_tokens) { finish = "length"; break; }
+            if (g_n_past >= n_ctx_gen) { finish = "length"; break; }
+            emit_token(id);
+
+            // Room left for drafted tokens (reply budget and context).
+            const long long room = std::min<long long>((long long)max_tokens - n_generated,
+                                                       (long long)n_ctx_gen - g_n_past - 1);
+            const int n_max = (int)std::min<long long>(g_mtp_n_draft, std::max<long long>(0, room));
+            draft.clear();
+            if (n_max > 0) {
+                auto& dp = common_speculative_get_draft_params(g_spec, 0);
+                dp.drafting = true;
+                dp.n_max = n_max;
+                dp.pos0 = g_n_past;
+                dp.id_last = id;
+                dp.prompt = &g_cached_tokens;
+                dp.result = &draft;
+                common_speculative_draft(g_spec);
+                if ((int)draft.size() > n_max) draft.resize(n_max);
+            }
+            if (!draft.empty()) {
+                g_last_stats.draft_steps++;
+                g_last_stats.drafted += (int)draft.size();
+            }
+
+            if (dft_own_kv) {
+                // The draft steps wrote speculative cells; the verify batch
+                // below re-fills them through common_speculative_process.
+                llama_memory_seq_rm(llama_get_memory(g_mtp_ctx), 0, g_n_past, -1);
+            }
+
+            // Verify batch: [id, d0, d1, ...] at consecutive positions.
+            batch.n_tokens = 0;
+            auto add = [&](llama_token t, llama_pos pos) {
+                batch.token[batch.n_tokens] = t;
+                batch.pos[batch.n_tokens] = pos;
+                batch.n_seq_id[batch.n_tokens] = 1;
+                batch.seq_id[batch.n_tokens][0] = 0;
+                batch.logits[batch.n_tokens] = true;
+                batch.n_tokens++;
+            };
+            add(id, g_n_past);
+            for (size_t k = 0; k < draft.size(); k++) add(draft[k], g_n_past + 1 + (llama_pos)k);
+            if (llama_decode(g_ctx, batch) != 0) {
+                LOGE("MTP: verify decode failed");
+                finish = "error";
+                break;
+            }
+            if (!common_speculative_process(g_spec, batch)) {
+                LOGE("MTP: draft head processing failed");
+            }
+            g_n_past++;
+            g_cached_tokens.push_back(id);
+
+            // Accept drafted tokens while the target agrees.
+            int n_accepted = 0;
+            llama_token next = LLAMA_TOKEN_NULL;
+            for (size_t k = 0; k <= draft.size(); k++) {
+                if (k == draft.size() && n_generated >= max_tokens) break;
+                const llama_token t = llama_sampler_sample(g_sampler, g_ctx, (int32_t)k);
+                if (k < draft.size() && t == draft[k] && !llama_vocab_is_eog(g_vocab, t) &&
+                    n_generated < max_tokens && !g_stop_flag) {
+                    emit_token(t);
+                    n_accepted++;
+                    g_n_past++;
+                    g_cached_tokens.push_back(t);
+                    continue;
+                }
+                next = t;
+                break;
+            }
+            g_last_stats.accepted += n_accepted;
+            // Drop the KV cells of rejected draft tokens.
+            llama_memory_seq_rm(llama_get_memory(g_ctx), 0, g_n_past, -1);
+            if (dft_own_kv) llama_memory_seq_rm(llama_get_memory(g_mtp_ctx), 0, g_n_past, -1);
+            common_speculative_accept(g_spec, 0, (uint16_t)n_accepted);
+            if (next == LLAMA_TOKEN_NULL) {
+                // Reply budget used up while every draft token matched.
+                finish = g_stop_flag ? "abort" : "length";
+                break;
+            }
+            id = next;
+        }
+        g_mtp_total_drafted += g_last_stats.drafted;
+        g_mtp_total_accepted += g_last_stats.accepted;
+        LOGI("MTP: drafted %d, accepted %d over %d steps", g_last_stats.drafted,
+             g_last_stats.accepted, g_last_stats.draft_steps);
     }
     LOGI("Generation loop finished.");
+    g_last_stats.completion_tokens = n_generated;
+    g_last_stats.finish = finish;
+    g_last_stats.gen_ms = std::chrono::duration<double, std::milli>(gen_clk::now() - t_prompt_done).count();
 
     if (g_token_callback != nullptr) {
         env->DeleteGlobalRef(g_token_callback);
         g_token_callback = nullptr;
     }
 
-    // After generation completion, ensure the KV cache is properly managed
-    // In some llama.cpp versions, KV cache management may be needed between generations
-    // For chat applications, we want to maintain conversation context
-    
     llama_batch_free(batch);
     env->DeleteLocalRef(callbackClass);
 }
@@ -1290,13 +1956,19 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeStop(
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeFreeModel(
     JNIEnv* env, jobject thiz) {
-    
+    // Waits for a generation still returning after nativeStop.
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
     if (g_sampler) {
         llama_sampler_free(g_sampler);
         g_sampler = nullptr;
     }
+    freeMtpLocked();
+    g_chat_tmpls.reset();
+    g_chat_tmpls_tried = false;
+    g_chat_params_valid = false;
     freeMtmd();
     g_cache_reusable = true;
+    freeThreadpool();
     if (g_ctx) {
         llama_free(g_ctx);
         g_ctx = nullptr;
@@ -1327,6 +1999,7 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeGetCon
 extern "C" JNIEXPORT void JNICALL
 Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeClearContext(
     JNIEnv* env, jobject thiz) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
     if (!g_ctx) {
         LOGE("Cannot clear context: context is null");
         return;
@@ -1349,4 +2022,498 @@ Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeSetSys
     JNIEnv* env, jobject thiz, jint length) {
     // Currently not used but available for future smart context management
     LOGI("System prompt length set to: %d tokens (currently unused)", length);
+}
+
+// ===========================================================================
+// LlamaExtNative: extension entry points (structured output, stats, MTP,
+// chat templates with tools, embeddings, tokenizer).
+// ===========================================================================
+
+#define EXT_FN(name) Java_com_write4me_llama_1flutter_1android_LlamaExtNative_##name
+
+static std::string jstr(JNIEnv* env, jstring s) {
+    if (!s) return std::string();
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string out = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+static jstring jsonOut(JNIEnv* env, const nlohmann::ordered_json& j) {
+    // error_handler::replace: never throw on a broken UTF-8 piece.
+    const std::string text = j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    return env->NewStringUTF(sanitizeUTF8(text.c_str(), text.size()).c_str());
+}
+
+static void throwJava(JNIEnv* env, const char* cls, const std::string& msg) {
+    jclass c = env->FindClass(cls);
+    if (c) env->ThrowNew(c, msg.c_str());
+}
+
+/// Generation-prompt tokens a non-lazy chat grammar must be fed first
+/// (mirrors common_sampler_init).
+static std::vector<llama_token> grammarPrefillTokens(const std::string& generation_prompt) {
+    std::vector<llama_token> out;
+    if (generation_prompt.empty() || !g_vocab) return out;
+    auto tokens = common_tokenize(g_vocab, generation_prompt, false, true);
+    for (size_t i = 0; i < tokens.size(); i++) {
+        std::string piece = common_token_to_piece(g_vocab, tokens[i], true);
+        if (i == 0 && !piece.empty() && std::isspace((unsigned char)piece[0]) &&
+            !std::isspace((unsigned char)generation_prompt[0])) {
+            continue;
+        }
+        out.push_back(tokens[i]);
+    }
+    return out;
+}
+
+static void triggersToPatterns(const std::vector<common_grammar_trigger>& triggers,
+                               std::vector<std::string>& patterns, std::vector<llama_token>& tokens) {
+    for (const auto& t : triggers) {
+        switch (t.type) {
+            case COMMON_GRAMMAR_TRIGGER_TYPE_WORD:
+                patterns.push_back(regex_escape(t.value));
+                break;
+            case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN:
+                patterns.push_back(t.value);
+                break;
+            case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_FULL: {
+                std::string anchored = "^$";
+                if (!t.value.empty()) {
+                    anchored = (t.value.front() != '^' ? "^" : "") + t.value +
+                               (t.value.back() != '$' ? "$" : "");
+                }
+                patterns.push_back(anchored);
+                break;
+            }
+            case COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN:
+                tokens.push_back(t.token);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+/// Stages a GBNF grammar for the next generation only. Empty clears it.
+extern "C" JNIEXPORT void JNICALL
+EXT_FN(nativeSetGrammar)(JNIEnv* env, jobject, jstring grammar) {
+    std::lock_guard<std::mutex> lock(g_staged_mutex);
+    g_staged_grammar = StagedGrammar();
+    g_staged_grammar.grammar = jstr(env, grammar);
+}
+
+/// JSON schema (text) -> GBNF. Throws IllegalArgumentException on a bad schema.
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeJsonSchemaToGrammar)(JNIEnv* env, jobject, jstring schema) {
+    try {
+        const std::string g = json_schema_to_grammar(common_json::parse(jstr(env, schema)));
+        return env->NewStringUTF(g.c_str());
+    } catch (const std::exception& e) {
+        throwJava(env, "java/lang/IllegalArgumentException", std::string("Invalid JSON schema: ") + e.what());
+        return nullptr;
+    }
+}
+
+/// Stats of the last generation (JSON).
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeLastStats)(JNIEnv* env, jobject) {
+    const GenStats s = g_last_stats;
+    nlohmann::ordered_json j = {
+        {"prompt_tokens", s.prompt_tokens},
+        {"cached_tokens", s.cached_tokens},
+        {"completion_tokens", s.completion_tokens},
+        {"finish", s.finish},
+        {"prompt_ms", s.prompt_ms},
+        {"gen_ms", s.gen_ms},
+        {"mtp", s.mtp},
+        {"mtp_draft_steps", s.draft_steps},
+        {"mtp_drafted", s.drafted},
+        {"mtp_accepted", s.accepted},
+    };
+    return jsonOut(env, j);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+EXT_FN(nativeTokenize)(JNIEnv* env, jobject, jstring text, jboolean add_special, jboolean parse_special) {
+    if (!g_vocab) {
+        throwJava(env, "java/lang/IllegalStateException", "Model not loaded");
+        return nullptr;
+    }
+    const std::string t = jstr(env, text);
+    auto tokens = common_tokenize(g_vocab, t, add_special, parse_special);
+    jintArray out = env->NewIntArray((jsize)tokens.size());
+    if (!tokens.empty()) env->SetIntArrayRegion(out, 0, (jsize)tokens.size(), tokens.data());
+    return out;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeDetokenize)(JNIEnv* env, jobject, jintArray tokens, jboolean special) {
+    if (!g_vocab) {
+        throwJava(env, "java/lang/IllegalStateException", "Model not loaded");
+        return nullptr;
+    }
+    const jsize n = tokens ? env->GetArrayLength(tokens) : 0;
+    std::vector<llama_token> v(n);
+    if (n > 0) env->GetIntArrayRegion(tokens, 0, n, v.data());
+    const int n_vocab = llama_vocab_n_tokens(g_vocab);
+    for (auto t : v) {
+        if (t < 0 || t >= n_vocab) {
+            throwJava(env, "java/lang/IllegalArgumentException", "Token id out of range: " + std::to_string(t));
+            return nullptr;
+        }
+    }
+    const std::string s = common_detokenize(g_vocab, v, special);
+    return env->NewStringUTF(sanitizeUTF8(s.c_str(), s.size()).c_str());
+}
+
+/// Mean-pooled (or the model's own pooling), L2-normalised embedding of
+/// `text` from the loaded model. Clears the chat KV cache.
+extern "C" JNIEXPORT jfloatArray JNICALL
+EXT_FN(nativeEmbed)(JNIEnv* env, jobject, jstring text, jboolean normalize) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
+    if (!g_ctx || !g_vocab || !g_model) {
+        throwJava(env, "java/lang/IllegalStateException", "Model not loaded");
+        return nullptr;
+    }
+    auto tokens = common_tokenize(g_vocab, jstr(env, text), true, false);
+    if (tokens.empty()) {
+        throwJava(env, "java/lang/IllegalArgumentException", "Input is empty");
+        return nullptr;
+    }
+    const int n_ctx = (int)llama_n_ctx(g_ctx);
+    if ((int)tokens.size() > n_ctx) tokens.resize(n_ctx);
+    const int n_embd = llama_model_n_embd_out(g_model);
+    const enum llama_pooling_type pooling = llama_pooling_type(g_ctx);
+
+    llama_memory_t mem = llama_get_memory(g_ctx);
+    llama_memory_seq_rm(mem, 0, 0, -1);
+    g_cached_tokens.clear();
+    g_n_past = 0;
+    g_cache_reusable = true;
+
+    llama_set_embeddings(g_ctx, true);
+    std::vector<double> sum(n_embd, 0.0);
+    // Small chunks: every output row also gets a full logits row.
+    const int chunk = pooling == LLAMA_POOLING_TYPE_NONE ? 8 : (int)std::min<size_t>(tokens.size(), llama_n_batch(g_ctx));
+    llama_batch batch = llama_batch_init(std::max(chunk, 1), 0, 1);
+    std::string error;
+    int n_rows = 0;
+    for (size_t done = 0; done < tokens.size() && error.empty();) {
+        const int n = (int)std::min<size_t>(chunk, tokens.size() - done);
+        batch.n_tokens = n;
+        for (int i = 0; i < n; i++) {
+            batch.token[i] = tokens[done + i];
+            batch.pos[i] = (llama_pos)(done + i);
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = true;
+        }
+        if (llama_decode(g_ctx, batch) != 0) {
+            error = "llama_decode failed";
+            break;
+        }
+        if (pooling == LLAMA_POOLING_TYPE_NONE) {
+            for (int i = 0; i < n; i++) {
+                const float* e = llama_get_embeddings_ith(g_ctx, i);
+                if (!e) { error = "no embeddings"; break; }
+                for (int k = 0; k < n_embd; k++) sum[k] += e[k];
+                n_rows++;
+            }
+        }
+        done += n;
+    }
+    if (error.empty() && pooling != LLAMA_POOLING_TYPE_NONE) {
+        const float* e = llama_get_embeddings_seq(g_ctx, 0);
+        if (!e) {
+            error = "no pooled embeddings";
+        } else {
+            for (int k = 0; k < n_embd; k++) sum[k] = e[k];
+            n_rows = 1;
+        }
+    }
+    llama_batch_free(batch);
+    llama_set_embeddings(g_ctx, false);
+    llama_memory_seq_rm(mem, 0, 0, -1);
+    if (!error.empty()) {
+        throwJava(env, "java/lang/RuntimeException", "Embedding failed: " + error);
+        return nullptr;
+    }
+    std::vector<float> out(n_embd);
+    double norm = 0.0;
+    for (int k = 0; k < n_embd; k++) {
+        out[k] = (float)(sum[k] / std::max(1, n_rows));
+        norm += (double)out[k] * out[k];
+    }
+    if (normalize && norm > 0) {
+        const float inv = (float)(1.0 / std::sqrt(norm));
+        for (auto& v : out) v *= inv;
+    }
+    jfloatArray arr = env->NewFloatArray(n_embd);
+    env->SetFloatArrayRegion(arr, 0, n_embd, out.data());
+    return arr;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+EXT_FN(nativeLastEmbedTokens)(JNIEnv*, jobject) { return 0; }
+
+/// Vision projector loaded right now.
+extern "C" JNIEXPORT jboolean JNICALL
+EXT_FN(nativeHasVision)(JNIEnv*, jobject) { return g_mtmd != nullptr; }
+
+/// Loads the vision projector on demand (lazy vision). Null on success.
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeLoadMmproj)(JNIEnv* env, jobject thiz, jstring path, jlong n_threads) {
+    if (g_mtmd) return nullptr;
+    return Java_com_write4me_llama_1flutter_1android_LlamaFlutterAndroidPlugin_nativeLoadMmproj(
+        env, thiz, path, n_threads);
+}
+
+/// Options for the next model load: load the model's own NextN (MTP)
+/// layers, and how many draft tokens it should be able to roll back.
+extern "C" JNIEXPORT void JNICALL
+EXT_FN(nativeSetLoadMtp)(JNIEnv*, jobject, jboolean load_layers, jint n_draft) {
+    g_load_mtp_layers = load_layers;
+    g_load_rs_seq = load_layers ? std::max(0, (int)n_draft) : 0;
+}
+
+/// Creates the MTP draft head for the loaded model: from `draft_path` (a
+/// separate draft GGUF such as Gemma 4's "-assistant" file) or, when empty,
+/// from the model's own NextN layers. Returns null on success, else why not.
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeLoadMtp)(JNIEnv* env, jobject, jstring draft_path, jint n_draft, jfloat p_min) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
+    freeMtpLocked();
+    if (!g_model || !g_ctx) return env->NewStringUTF("Load the model first");
+    if (g_load_cluster) return env->NewStringUTF("MTP is not supported with the phone cluster (RPC); using normal decoding");
+    const std::string path = jstr(env, draft_path);
+    g_mtp_n_draft = std::max(1, std::min(16, (int)n_draft));
+
+    llama_model* dft_model = nullptr;
+    if (!path.empty()) {
+        llama_model_params mp = llama_model_default_params();
+        static std::vector<ggml_backend_dev_t> devs;
+        devs = g_load_devices;
+        devs.push_back(nullptr);
+        mp.devices = devs.data();
+        mp.n_gpu_layers = g_load_n_gpu_layers > 0 ? 999 : 0;
+        mp.load_mode = LLAMA_LOAD_MODE_MMAP;
+        // Same weight-repack choice as the target (repack=0 must not add an
+        // anonymous CPU_REPACK copy of the draft head behind the user's back).
+        if (g_opt.repack >= 0) mp.use_extra_bufts = g_opt.repack != 0;
+        {
+            std::lock_guard<std::mutex> lock(g_load_log_mutex);
+            g_load_error.clear();
+            g_capture_load_error = true;
+        }
+        dft_model = llama_model_load_from_file(path.c_str(), mp);
+        const std::string detail = consumeLoadError();
+        if (!dft_model) {
+            return env->NewStringUTF(("MTP draft model failed to load" + (detail.empty() ? std::string() : ": " + detail)).c_str());
+        }
+    } else if (llama_model_n_layer_nextn(g_model) <= 0) {
+        return env->NewStringUTF("This model has no MTP (NextN) layers and no draft file was given");
+    }
+
+    llama_context_params cp = g_load_cparams;
+    cp.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+    cp.n_ctx = llama_n_ctx(g_ctx);
+    cp.n_rs_seq = 0;
+    cp.n_seq_max = 1;
+    cp.embeddings = false;
+    cp.samplers = nullptr;
+    cp.n_samplers = 0;
+    cp.ctx_other = g_ctx;
+    llama_context* dft_ctx = nullptr;
+    try {
+        dft_ctx = llama_init_from_model(dft_model ? dft_model : g_model, cp);
+    } catch (const std::exception& e) {
+        LOGE("MTP context: %s", e.what());
+    }
+    if (!dft_ctx) {
+        if (dft_model) llama_model_free(dft_model);
+        return env->NewStringUTF("Could not create the MTP draft context (draft file may not match this model)");
+    }
+    if (llama_model_n_embd_out(llama_get_model(dft_ctx)) != llama_model_n_embd_out(g_model)) {
+        llama_free(dft_ctx);
+        if (dft_model) llama_model_free(dft_model);
+        return env->NewStringUTF("The MTP draft file doesn't match this model (hidden size differs)");
+    }
+
+    common_params_speculative sp;
+    sp.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
+    sp.draft.n_max = g_mtp_n_draft;
+    sp.draft.n_min = 0;
+    sp.draft.p_min = std::max(0.0f, (float)p_min);
+    sp.draft.backend_sampling = false;
+    sp.draft.ctx_tgt = g_ctx;
+    sp.draft.ctx_dft = dft_ctx;
+    common_speculative* spec = nullptr;
+    try {
+        spec = common_speculative_init(sp, 1);
+    } catch (const std::exception& e) {
+        LOGE("MTP init: %s", e.what());
+    }
+    if (!spec) {
+        llama_free(dft_ctx);
+        if (dft_model) llama_model_free(dft_model);
+        llama_set_embeddings_nextn(g_ctx, false, false);
+        return env->NewStringUTF("Speculative decoding could not be initialised");
+    }
+    g_mtp_model = dft_model;
+    g_mtp_ctx = dft_ctx;
+    g_spec = spec;
+    g_mtp_enabled = true;
+    g_mtp_total_drafted = 0;
+    g_mtp_total_accepted = 0;
+    // The draft head hasn't seen the cached conversation: start fresh.
+    llama_memory_seq_rm(llama_get_memory(g_ctx), 0, 0, -1);
+    g_cached_tokens.clear();
+    g_n_past = 0;
+    LOGI("MTP ready: %s, n_draft=%d, shared_kv=%d", dft_model ? "draft file" : "NextN layers",
+         g_mtp_n_draft, (int)(llama_get_ctx_other(dft_ctx) == g_ctx));
+    return nullptr;
+}
+
+extern "C" JNIEXPORT void JNICALL
+EXT_FN(nativeFreeMtp)(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
+    freeMtpLocked();
+}
+
+/// Runtime switch / draft length for a loaded MTP head.
+extern "C" JNIEXPORT void JNICALL
+EXT_FN(nativeSetMtp)(JNIEnv*, jobject, jboolean enabled, jint n_draft) {
+    g_mtp_enabled = enabled;
+    if (n_draft > 0) g_mtp_n_draft = std::min(16, (int)n_draft);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeMtpInfo)(JNIEnv* env, jobject) {
+    nlohmann::ordered_json j = {
+        {"loaded", g_spec != nullptr},
+        {"enabled", g_mtp_enabled},
+        {"source", g_spec ? (g_mtp_model ? "draft_file" : "nextn_layers") : ""},
+        {"shared_kv", g_mtp_ctx && llama_get_ctx_other(g_mtp_ctx) == g_ctx},
+        {"n_draft", g_mtp_n_draft},
+        {"total_drafted", g_mtp_total_drafted},
+        {"total_accepted", g_mtp_total_accepted},
+        {"acceptance", g_mtp_total_drafted > 0 ? (double)g_mtp_total_accepted / (double)g_mtp_total_drafted : 0.0},
+        {"model_nextn_layers", g_model ? llama_model_n_layer_nextn(g_model) : 0},
+    };
+    return jsonOut(env, j);
+}
+
+/// Basic facts about the loaded model (JSON).
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeModelInfo)(JNIEnv* env, jobject) {
+    if (!g_model) return env->NewStringUTF("{}");
+    char desc[256] = {0};
+    llama_model_desc(g_model, desc, sizeof(desc));
+    const char* tmpl = llama_model_chat_template(g_model, nullptr);
+    nlohmann::ordered_json j = {
+        {"desc", std::string(desc)},
+        {"n_ctx", g_ctx ? (int)llama_n_ctx(g_ctx) : 0},
+        {"n_ctx_train", llama_model_n_ctx_train(g_model)},
+        {"n_embd", llama_model_n_embd(g_model)},
+        {"n_layer", llama_model_n_layer(g_model)},
+        {"n_vocab", g_vocab ? llama_vocab_n_tokens(g_vocab) : 0},
+        {"n_params", (double)llama_model_n_params(g_model)},
+        {"size", (double)llama_model_size(g_model)},
+        {"has_chat_template", tmpl != nullptr},
+        {"vision", g_mtmd != nullptr},
+    };
+    return jsonOut(env, j);
+}
+
+/// Renders an OpenAI-style chat request with the model's own Jinja chat
+/// template (tools, tool calls and tool results included). Input JSON:
+///   {messages, tools?, tool_choice?, parallel_tool_calls?, json_schema?,
+///    enable_thinking?, add_generation_prompt?}
+/// Returns {prompt, format, grammar_lazy, has_grammar, additional_stops} or
+/// {error}. The grammar (tool calls / json_schema) is staged for the next
+/// generation and the output parser is kept for nativeChatParse.
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeChatPrepare)(JNIEnv* env, jobject, jstring request_json) {
+    nlohmann::ordered_json out;
+    try {
+        std::lock_guard<std::mutex> ctx_lock(g_ctx_mutex);
+        if (!g_model) throw std::runtime_error("Model not loaded");
+        if (!g_chat_tmpls_tried) {
+            g_chat_tmpls_tried = true;
+            try {
+                g_chat_tmpls = common_chat_templates_init(g_model, "");
+            } catch (const std::exception& e) {
+                LOGE("Chat templates: %s", e.what());
+            }
+        }
+        if (!g_chat_tmpls) throw std::runtime_error("This model has no usable chat template");
+
+        const common_json req = common_json::parse(jstr(env, request_json));
+        common_chat_templates_inputs in;
+        in.use_jinja = true;
+        in.messages = common_chat_msgs_parse_oaicompat(req.at("messages"));
+        if (req.contains("tools") && !req.at("tools").is_null()) {
+            in.tools = common_chat_tools_parse_oaicompat(req.at("tools"));
+        }
+        if (req.contains("tool_choice") && req.at("tool_choice").is_string()) {
+            in.tool_choice = common_chat_tool_choice_parse_oaicompat(req.at("tool_choice").get<std::string>());
+        }
+        if (req.contains("parallel_tool_calls") && req.at("parallel_tool_calls").is_boolean()) {
+            in.parallel_tool_calls = req.at("parallel_tool_calls").get<bool>();
+        }
+        if (req.contains("json_schema") && req.at("json_schema").is_string()) {
+            in.json_schema = req.at("json_schema").get<std::string>();
+        }
+        in.enable_thinking = req.contains("enable_thinking") && req.at("enable_thinking").is_boolean()
+            ? req.at("enable_thinking").get<bool>() : false;
+        in.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
+        in.add_generation_prompt = !req.contains("add_generation_prompt") ||
+            !req.at("add_generation_prompt").is_boolean() || req.at("add_generation_prompt").get<bool>();
+
+        common_chat_params params = common_chat_templates_apply(g_chat_tmpls.get(), in);
+
+        StagedGrammar staged;
+        staged.grammar = params.grammar;
+        staged.lazy = params.grammar_lazy;
+        triggersToPatterns(params.grammar_triggers, staged.trigger_patterns, staged.trigger_tokens);
+        if (!staged.grammar.empty() && !staged.lazy) {
+            staged.prefill_tokens = grammarPrefillTokens(params.generation_prompt);
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_staged_mutex);
+            g_staged_grammar = std::move(staged);
+        }
+
+        out["prompt"] = params.prompt;
+        out["format"] = common_chat_format_name(params.format);
+        out["has_grammar"] = !params.grammar.empty();
+        out["grammar_lazy"] = params.grammar_lazy;
+        out["additional_stops"] = params.additional_stops;
+        g_chat_params = std::move(params);
+        g_chat_params_valid = true;
+    } catch (const std::exception& e) {
+        out = nlohmann::ordered_json::object();
+        out["error"] = std::string(e.what());
+    }
+    return jsonOut(env, out);
+}
+
+/// Parses model output of the last nativeChatPrepare into an OpenAI message
+/// ({role, content, tool_calls?, reasoning_content?}) or {error}.
+extern "C" JNIEXPORT jstring JNICALL
+EXT_FN(nativeChatParse)(JNIEnv* env, jobject, jstring text, jboolean is_partial) {
+    try {
+        if (!g_chat_params_valid) throw std::runtime_error("No chat template prepared");
+        common_chat_parser_params pp(g_chat_params);
+        pp.reasoning_format = COMMON_REASONING_FORMAT_AUTO;
+        pp.parse_tool_calls = true;
+        if (!g_chat_params.parser.empty()) pp.parser.load(g_chat_params.parser);
+        const common_chat_msg msg = common_chat_parse(jstr(env, text), is_partial, pp);
+        const std::string s = msg.to_json_oaicompat().dump_safe();
+        return env->NewStringUTF(sanitizeUTF8(s.c_str(), s.size()).c_str());
+    } catch (const std::exception& e) {
+        nlohmann::ordered_json out = {{"error", std::string(e.what())}};
+        return jsonOut(env, out);
+    }
 }

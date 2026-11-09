@@ -106,8 +106,8 @@ class LlamaCluster {
 
   /// Starts serving this phone's CPU to a master, in a foreground service
   /// that keeps running in the background.
-  static Future<void> startWorker({int port = defaultPort, int? threads}) =>
-      _channel.invokeMethod('startWorker', {'port': port, 'threads': threads});
+  static Future<void> startWorker({int port = defaultPort, int? threads, bool gpu = false}) =>
+      _channel.invokeMethod('startWorker', {'port': port, 'threads': threads, 'gpu': gpu});
 
   static Future<void> stopWorker() => _channel.invokeMethod('stopWorker');
 
@@ -182,4 +182,28 @@ class LlamaCluster {
       });
 
   static Future<void> clear() => setCluster(const []);
+
+  // ── Bench build ──────────────────────────────────────────────────────────
+
+  /// Engine options for the next GGUF load. Keys: swaFull, flashAttn, typeK,
+  /// typeV, threads, nBatch, nUbatch, gpuLayers, localLayers, opOffload.
+  static Future<void> setEngineOptions(Map<String, dynamic> options) =>
+      _channel.invokeMethod('setEngineOptions', options);
+
+  /// llama-bench style pp/tg at a KV depth on the loaded model (JSON text).
+  static Future<String> bench({int depth = 0, int pp = 512, int tg = 64}) async =>
+      await _channel.invokeMethod<String>('bench', {'depth': depth, 'pp': pp, 'tg': tg}) ??
+      '{"error":"no result"}';
+
+  /// Every "buffer size" log line of the last load (weights, KV, compute).
+  static Future<String> memLog() async =>
+      await _channel.invokeMethod<String>('memLog') ?? '';
+
+  /// Registered ggml devices ("name	desc	type	freeMiB	totalMiB" lines).
+  static Future<String> devices({bool loadGpu = false}) async =>
+      await _channel.invokeMethod<String>('devices', {'loadGpu': loadGpu}) ?? '';
+
+  /// System memory: availMb, totalMb, lowMemory, pssMb (this process).
+  static Future<Map<String, dynamic>> memInfo() async =>
+      await _channel.invokeMapMethod<String, dynamic>('memInfo') ?? {};
 }

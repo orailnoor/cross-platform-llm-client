@@ -13,6 +13,7 @@ import '../services/device_info_native.dart' as platform_info;
 import '../ffi/sd_ffi_bindings.dart';
 import '../services/cluster_service.dart';
 import 'cluster_view.dart';
+import 'advanced_settings_view.dart';
 import 'log_view.dart';
 import '../core/haptics.dart';
 
@@ -111,6 +112,12 @@ class SettingsView extends GetView<SettingsController> {
                     ? 'CPU'
                     : 'GPU',
                 builder: (ctx) => _buildImageGenerationGroup(ctx),
+              ),
+              AppRow(
+                icon: Icons.developer_board_rounded,
+                title: 'Engine, vision & server',
+                chevron: true,
+                onTap: () => Get.to(() => const AdvancedSettingsView()),
               ),
               if (Get.isRegistered<ClusterService>())
                 AppRow(
@@ -680,8 +687,10 @@ class SettingsView extends GetView<SettingsController> {
                 inference.loadedModelRuntime.value == 'litert') ||
             (!inference.isModelLoaded.value &&
                 savedRuntime.toLowerCase() == 'litert');
-        final maxContext = isLiteRtActive ? 4096.0 : 8192.0;
-        final divisions = isLiteRtActive ? 7 : 15;
+        // GGUF: up to 128k (Gemma 4 E4B trains at 131072; with swa_full off
+        // its KV is ~16 KB/token, so long contexts fit in phone RAM).
+        final maxContext = isLiteRtActive ? 4096.0 : 131072.0;
+        final divisions = isLiteRtActive ? 7 : 255;
         final currentValue =
             controller.contextSize.value.toDouble().clamp(512.0, maxContext);
 

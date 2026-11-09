@@ -271,12 +271,19 @@ struct llama_file::impl {
             const size_t curr_off = tell();
             const size_t to_read = std::min(len, size - curr_off);
 
-            std::size_t ret = std::fread(ptr, to_read, 1, fp);
-            if (ferror(fp)) {
-                throw std::runtime_error(format("read error: %s", strerror(errno)));
-            }
-            if (to_read > 0 && ret != 1) {
-                throw std::runtime_error("unexpectedly reached end of file");
+            // PrivateLM patch: Android's stdio reads through an int-sized
+            // count, so one fread() over 2 GiB aborts (FORTIFY). Read in chunks.
+            size_t done = 0;
+            while (done < to_read) {
+                const size_t chunk = std::min<size_t>(to_read - done, (size_t)1 << 30);
+                std::size_t ret = std::fread(reinterpret_cast<char *>(ptr) + done, chunk, 1, fp);
+                if (ferror(fp)) {
+                    throw std::runtime_error(format("read error: %s", strerror(errno)));
+                }
+                if (ret != 1) {
+                    throw std::runtime_error("unexpectedly reached end of file");
+                }
+                done += chunk;
             }
         } else {
             size_t bytes_read = 0;
