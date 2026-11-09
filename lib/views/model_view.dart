@@ -68,10 +68,10 @@ class ModelView extends GetView<ModelController> {
         child: Obx(() {
           final scope = controller.modelScope.value;
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 24),
             children: [
               _buildScopeToggle(context),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               _buildActiveModelBanner(context),
               _buildActiveDownloadsBanner(context),
               if (scope == 'local') ...[
@@ -142,7 +142,7 @@ class ModelView extends GetView<ModelController> {
       context,
       title: 'Import model',
       subtitle: 'Add .gguf, .litertlm or .safetensors files from your phone.',
-      builder: (ctx) => AppGroup(dividerIndent: 60, children: [
+      builder: (ctx) => AppGroup(children: [
         AppRow(
           icon: Icons.insert_drive_file_outlined,
           title: 'Import file',
@@ -211,7 +211,7 @@ class ModelView extends GetView<ModelController> {
       final t = AppTokens.of(context);
       if (controller.modelScope.value == 'online') {
         return Padding(
-          padding: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.only(bottom: 8),
           child: _buildActiveCloudBanner(context),
         );
       }
@@ -240,7 +240,7 @@ class ModelView extends GetView<ModelController> {
       }
 
       return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.only(bottom: 8),
         child: _ActiveCard(
           icon: icon,
           title: _prettyModel(name),
@@ -290,16 +290,13 @@ class ModelView extends GetView<ModelController> {
       }
 
       return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.only(bottom: 8),
         child: AppCard(
           padding: EdgeInsets.zero,
           child: Column(children: [
             for (var i = 0; i < downloads.length; i++) ...[
               if (i > 0)
-                Padding(
-                  padding: const EdgeInsets.only(left: 58),
-                  child: Container(height: 0.5, color: t.hairline),
-                ),
+                Container(height: 0.5, color: t.hairline),
               Obx(() {
                 final dp = downloads[i];
                 final pct = (dp.progress.value * 100).clamp(0.0, 100.0);
@@ -314,7 +311,7 @@ class ModelView extends GetView<ModelController> {
                     '${DownloadService.formatDuration(eta)} left',
                 ].join(' · ');
                 return Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 11, 6, 11),
+                  padding: const EdgeInsets.all(6),
                   child: Row(children: [
                     const IconBadge(Icons.download_rounded, size: 32),
                     const SizedBox(width: 12),
@@ -483,9 +480,9 @@ class ModelView extends GetView<ModelController> {
           controller.importStatus.value.toLowerCase().contains('download');
 
       return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.only(bottom: 8),
         child: AppCard(
-          padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+          padding: const EdgeInsets.fromLTRB(6, 6, 10, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -495,7 +492,7 @@ class ModelView extends GetView<ModelController> {
                     isDownload
                         ? Icons.download_rounded
                         : Icons.file_upload_outlined,
-                    size: 36,
+                    size: 32,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -564,9 +561,8 @@ class ModelView extends GetView<ModelController> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const SectionHeader('Providers',
-              padding: EdgeInsets.fromLTRB(4, 20, 4, 8)),
+              padding: EdgeInsets.fromLTRB(0, 12, 12, 4)),
           AppGroup(
-            dividerIndent: 64,
             children: [
               for (final provider in cloud.providers)
                 _buildOnlineProviderRow(context, cloud, provider),
@@ -608,13 +604,13 @@ class ModelView extends GetView<ModelController> {
       splashFactory: NoSplash.splashFactory,
       highlightColor: t.surfacePressed,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
+        padding: const EdgeInsets.all(6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                IconBadge(provider.icon, size: 36),
+                IconBadge(provider.icon, size: 32),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -625,18 +621,15 @@ class ModelView extends GetView<ModelController> {
                           Flexible(
                             child: Text(
                               name.isEmpty ? provider.name : name,
-                              style: t.bodyStrong,
+                              style: t.rowTitle
+                                  .copyWith(fontWeight: FontWeight.w600),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          if (isActive && hasSelectedModel) ...[
-                            const SizedBox(width: 8),
-                            AppTag('Active', color: t.accent),
-                          ],
                         ],
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 1),
                       Row(
                         children: [
                           StatusDot(canUse ? t.green : t.faint),
@@ -644,7 +637,7 @@ class ModelView extends GetView<ModelController> {
                           Expanded(
                             child: Text(
                               meta,
-                              style: t.small.copyWith(
+                              style: t.rowSubtitle.copyWith(
                                   color: hasSelectedModel ? t.text : t.muted),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -655,6 +648,10 @@ class ModelView extends GetView<ModelController> {
                     ],
                   ),
                 ),
+                if (isActive && hasSelectedModel) ...[
+                  const SizedBox(width: 8),
+                  AppTag('Active', color: t.accent),
+                ],
                 const SizedBox(width: 4),
                 _IconAction(
                   icon: Icons.more_horiz_rounded,
@@ -759,7 +756,6 @@ class ModelView extends GetView<ModelController> {
             ),
             const SizedBox(height: 20),
             AppGroup(
-              dividerIndent: 60,
               children: [
                 if (!isCustom)
                   AppRow(
@@ -1126,7 +1122,7 @@ class ModelView extends GetView<ModelController> {
               modelList = Container(
                 decoration: BoxDecoration(
                   color: _sheetSurface(t),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(22),
                   border: Border.all(color: t.hairline, width: 0.5),
                 ),
                 clipBehavior: Clip.antiAlias,
@@ -1343,9 +1339,9 @@ class ModelView extends GetView<ModelController> {
       splashFactory: NoSplash.splashFactory,
       highlightColor: t.surfacePressed,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 52),
+        constraints: const BoxConstraints(minHeight: 44),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
           child: Row(
             children: [
               Expanded(
@@ -1637,7 +1633,7 @@ class ModelView extends GetView<ModelController> {
           highlightColor: Colors.transparent,
           overlayColor: const WidgetStatePropertyAll(Colors.transparent),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            padding: const EdgeInsets.all(6),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1655,17 +1651,13 @@ class ModelView extends GetView<ModelController> {
                           Row(children: [
                             Flexible(
                               child: Text(name,
-                                  style: t.body
+                                  style: t.rowTitle
                                       .copyWith(fontWeight: FontWeight.w500),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis),
                             ),
-                            if (uncensored) ...[
-                              const SizedBox(width: 8),
-                              AppTag('Uncensored', color: t.orange),
-                            ],
                           ]),
-                          const SizedBox(height: 3),
+                          const SizedBox(height: 1),
                           Row(children: [
                             Flexible(
                               child: Text.rich(
@@ -1679,7 +1671,8 @@ class ModelView extends GetView<ModelController> {
                                     ),
                                   TextSpan(text: subtitle),
                                 ]),
-                                style: t.small.copyWith(fontFeatures: _tabular),
+                                style: t.rowSubtitle
+                                    .copyWith(fontFeatures: _tabular),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -1689,6 +1682,10 @@ class ModelView extends GetView<ModelController> {
                       ),
                     ),
                     const SizedBox(width: 10),
+                    if (uncensored) ...[
+                      AppTag('Uncensored', color: t.orange),
+                      const SizedBox(width: 8),
+                    ],
                     primaryAction,
                   ],
                 ),
@@ -1730,7 +1727,7 @@ class ModelView extends GetView<ModelController> {
     List<Widget> group(String title, List<AiModel> list) {
       if (list.isEmpty) return const [];
       final header = SectionHeader(title,
-          padding: EdgeInsets.fromLTRB(4, first ? 14 : 22, 0, 8));
+          padding: EdgeInsets.fromLTRB(0, first ? 8 : 12, 12, 4));
       first = false;
       return [
         header,
@@ -1742,7 +1739,7 @@ class ModelView extends GetView<ModelController> {
 
     return [
       Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 0, 0),
+        padding: EdgeInsets.zero,
         child: Row(children: [
           Expanded(
               child:
@@ -1769,7 +1766,7 @@ class ModelView extends GetView<ModelController> {
     }
     return [
       SectionHeader('All ${models.length}',
-          padding: const EdgeInsets.fromLTRB(4, 20, 0, 8),
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 4),
           trailing: _sortAction()),
       AppGroup(children: [
         for (final m in models) _buildModelCard(context, m),
@@ -1798,7 +1795,7 @@ class ModelView extends GetView<ModelController> {
     if (picks.isEmpty) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+        padding: const EdgeInsets.fromLTRB(0, 0, 12, 6),
         child: Text('Recommended', style: t.label),
       ),
       SizedBox(
@@ -1841,34 +1838,46 @@ class ModelView extends GetView<ModelController> {
         width: 168,
         child: Material(
           color: t.surface,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(22),
           child: InkWell(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(22),
             splashFactory: NoSplash.splashFactory,
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
             onTap: () => _showModelDetails(context, model,
                 controller.modelSizeLabel(model), const [], busy, null),
             child: Padding(
-              padding: const EdgeInsets.all(14),
+              // 6 inset + 16 avatar and button radius = the card's 22.
+              padding: const EdgeInsets.all(6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _ModelAvatar(
                       name: name,
                       image: controller.isImageModel(model),
-                      size: 44),
+                      size: 44,
+                      radius: 16),
                   const Spacer(),
-                  Text(name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: t.bodyStrong.copyWith(height: 1.25)),
-                  const SizedBox(height: 2),
-                  Text(_pitch[type]!, style: t.small),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: t.bodyStrong.copyWith(height: 1.25)),
+                          const SizedBox(height: 2),
+                          Text(_pitch[type]!, style: t.small),
+                        ]),
+                  ),
                   const SizedBox(height: 10),
                   Row(children: [
                     Expanded(
-                      child: Text(controller.modelSizeLabel(model),
-                          style: t.small.copyWith(fontFeatures: _tabular)),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: Text(controller.modelSizeLabel(model),
+                            style: t.small.copyWith(fontFeatures: _tabular)),
+                      ),
                     ),
                     action,
                   ]),
@@ -1978,7 +1987,7 @@ class ModelView extends GetView<ModelController> {
             ],
             if (actions.isNotEmpty) ...[
               const SizedBox(height: 18),
-              AppGroup(dividerIndent: 60, children: [
+              AppGroup(children: [
                 for (final (icon, label, destructive, onTap) in actions)
                   AppRow(
                     icon: icon,
@@ -2077,9 +2086,9 @@ class _ActiveCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = AppTokens.of(context);
     return AppCard(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      padding: const EdgeInsets.all(6),
       child: Row(children: [
-        IconBadge(icon, size: 40),
+        IconBadge(icon, size: 32),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -2089,8 +2098,8 @@ class _ActiveCard extends StatelessWidget {
                 Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: t.bodyStrong),
-                const SizedBox(height: 3),
+                    style: t.rowTitle.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 1),
                 Row(children: [
                   StatusDot(dot),
                   const SizedBox(width: 6),
@@ -2098,7 +2107,8 @@ class _ActiveCard extends StatelessWidget {
                     child: Text(meta,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: t.caption.copyWith(fontFeatures: _tabular)),
+                        style:
+                            t.rowSubtitle.copyWith(fontFeatures: _tabular)),
                   ),
                 ]),
               ]),
@@ -2125,12 +2135,12 @@ class _DownloadRing extends StatelessWidget {
       final value = dp?.progress.value ?? 0;
       final pct = (value * 100).clamp(0.0, 100.0).round();
       return SizedBox(
-        width: 38,
-        height: 38,
+        width: 32,
+        height: 32,
         child: Stack(alignment: Alignment.center, children: [
           SizedBox(
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             child: CircularProgressIndicator(
               value: value > 0 ? value : null,
               strokeWidth: 2.5,
@@ -2169,7 +2179,7 @@ class _SoftButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
           onTap: onPressed,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Text(label,
                 style: t.small.copyWith(
                     fontSize: 13,
@@ -2204,8 +2214,8 @@ class _RoundIconButton extends StatelessWidget {
             customBorder: const CircleBorder(),
             onTap: onPressed,
             child: SizedBox(
-              width: 34,
-              height: 34,
+              width: 32,
+              height: 32,
               child: Icon(icon, size: 18, color: t.text.withValues(alpha: 0.8)),
             ),
           ),
@@ -2303,8 +2313,8 @@ class _IconAction extends StatelessWidget {
           splashFactory: NoSplash.splashFactory,
           highlightColor: t.fill,
           child: SizedBox(
-            width: 36,
-            height: 36,
+            width: 32,
+            height: 32,
             child: Icon(icon, size: 19, color: color),
           ),
         ),
@@ -2429,11 +2439,13 @@ class _ModelAvatar extends StatelessWidget {
   final bool image;
   final bool loaded;
   final double size;
+  final double? radius;
   const _ModelAvatar(
       {required this.name,
       this.image = false,
       this.loaded = false,
-      this.size = 38});
+      this.size = 32,
+      this.radius});
 
   static const _families = <(String, String, Color)>[
     ('gemma', 'Ge', Color(0xFF4285F4)),
@@ -2487,7 +2499,7 @@ class _ModelAvatar extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: color.withValues(alpha: t.isDark ? 0.22 : 0.14),
-            borderRadius: BorderRadius.circular(size * 0.3),
+            borderRadius: BorderRadius.circular(radius ?? size / 2),
           ),
           child: Text(
             mono[0].toUpperCase() + mono.substring(1),

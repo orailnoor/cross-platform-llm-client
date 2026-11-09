@@ -27,12 +27,12 @@ class ServerView extends GetView<ServerController> {
         final error = controller.lastError.value;
 
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 96),
           children: [
             _StatusHero(controller: controller),
 
             if (error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               AppNotice(error, icon: Icons.error_outline_rounded, color: t.red),
             ],
 
@@ -44,7 +44,7 @@ class ServerView extends GetView<ServerController> {
                 title: controller.modelName,
                 subtitle: controller.hasLocalModel
                     ? 'Loaded on this device'
-                    : 'Load a GGUF or LiteRT-LM model to serve it',
+                    : 'Load a GGUF or LiteRT model',
                 trailing: controller.hasLocalModel
                     ? AppTag('Ready', color: t.green)
                     : AppTag('Not loaded', color: t.orange),
@@ -58,8 +58,8 @@ class ServerView extends GetView<ServerController> {
                 icon: Icons.lan_outlined,
                 title: 'Allow network access',
                 subtitle: allowNetwork
-                    ? 'Reachable from other devices on your network'
-                    : 'Only apps on this device can connect',
+                    ? 'Open to your network'
+                    : 'This device only',
                 trailing: Switch(
                   value: allowNetwork,
                   onChanged:
@@ -70,8 +70,8 @@ class ServerView extends GetView<ServerController> {
                 icon: Icons.key_outlined,
                 title: 'Require API key',
                 subtitle: allowNetwork
-                    ? 'Always on while network access is enabled'
-                    : 'Clients send Authorization: Bearer <key>',
+                    ? 'On with network access'
+                    : 'Sent as a Bearer token',
                 trailing: Switch(
                   value: controller.requiresApiKey,
                   onChanged:
@@ -79,7 +79,7 @@ class ServerView extends GetView<ServerController> {
                 ),
               ),
             ]),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             AppField(
               label: 'API key',
               helper: controller.requiresApiKey
@@ -127,7 +127,7 @@ class ServerView extends GetView<ServerController> {
                         ? null
                         : controller.openAiBaseUrl),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               _HealthTest(baseUrl: controller.localUrl.value),
 
               // ── Examples ──
@@ -137,14 +137,14 @@ class ServerView extends GetView<ServerController> {
                 lang: 'curl',
                 code: 'curl ${controller.baseUrl}/v1/models${_authHeader()}',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               _CodeBlock(
                 title: 'Chat completion',
                 lang: 'curl',
                 code:
                     'curl ${controller.baseUrl}/v1/chat/completions \\\n  -H "Content-Type: application/json"${_authHeader()} \\\n  -d \'{"model":"${controller.inference.loadedModelName.value}","messages":[{"role":"user","content":"Hello"}]}\'',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               _CodeBlock(
                 title: 'OpenAI SDK',
                 lang: 'python',
@@ -200,24 +200,32 @@ class _StatusHero extends StatelessWidget {
     }
 
     return AppCard(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      // 6 inset + the buttons' 16 radius = the card's 22 (concentric).
+      padding: const EdgeInsets.all(6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          StatusDot(dot, size: 8),
-          const SizedBox(width: 8),
-          Text('Local API server', style: t.small),
-        ]),
-        const SizedBox(height: 10),
-        Text(title, style: t.title.copyWith(fontSize: 20, letterSpacing: -0.5)),
-        const SizedBox(height: 4),
-        Text(meta,
-            style: t.caption, maxLines: 2, overflow: TextOverflow.ellipsis),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              StatusDot(dot, size: 8),
+              const SizedBox(width: 8),
+              Text('Local API server', style: t.small),
+            ]),
+            const SizedBox(height: 10),
+            Text(title,
+                style: t.title.copyWith(fontSize: 20, letterSpacing: -0.5)),
+            const SizedBox(height: 4),
+            Text(meta,
+                style: t.caption, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ]),
+        ),
         const SizedBox(height: 16),
         if (isRunning && !isStarting)
           SizedBox(
             width: double.infinity,
-            child: TonalButton.destructive(context, label: 'Stop server',
-                onTap: () {
+            child: TonalButton.destructive(context,
+                label: 'Stop server', radius: 16, onTap: () {
               Haptics.mediumImpact();
               controller.toggleServer(false);
             }),
@@ -227,6 +235,7 @@ class _StatusHero extends StatelessWidget {
             label: isStarting ? 'Starting…' : 'Start server',
             icon: Icons.play_arrow_rounded,
             busy: isStarting,
+            radius: 16,
             onPressed: () {
               Haptics.mediumImpact();
               controller.toggleServer(true);
@@ -277,7 +286,8 @@ class _CopyButtonState extends State<_CopyButton> {
     final enabled = widget.text != null;
     return IconButton(
       tooltip: _copied ? 'Copied' : widget.tooltip,
-      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
       onPressed: enabled ? _copy : null,
       icon: AnimatedSwitcher(
         duration: const Duration(milliseconds: 160),
@@ -306,18 +316,19 @@ class _UrlRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = AppTokens.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 6, 10),
+      padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
       child: Row(children: [
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: t.small),
-            const SizedBox(height: 3),
+            Text(label, style: t.rowSubtitle),
+            const SizedBox(height: 1),
             Text(
               url ?? 'Not available',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: t.mono.copyWith(color: url == null ? t.faint : t.text),
+              style: t.mono
+                  .copyWith(height: 1.2, color: url == null ? t.faint : t.text),
             ),
           ]),
         ),
@@ -419,13 +430,13 @@ class _CodeBlock extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: t.isDark ? const Color(0xFF0E0E10) : const Color(0xFFF0F0F2),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: t.hairline, width: 0.5),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 4, 4, 0),
+          padding: const EdgeInsets.fromLTRB(14, 6, 6, 0),
           child: Row(children: [
             Flexible(
               child: Text(title,
@@ -442,7 +453,7 @@ class _CodeBlock extends StatelessWidget {
         Container(height: 0.5, color: t.hairline),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
           child: Text(code, style: t.mono.copyWith(height: 1.5)),
         ),
       ]),

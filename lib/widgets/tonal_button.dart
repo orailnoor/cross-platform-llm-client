@@ -8,6 +8,7 @@ class TonalButton extends StatelessWidget {
   final Color color;
   final Color fill;
   final VoidCallback onTap;
+  final double radius;
 
   const TonalButton({
     super.key,
@@ -15,6 +16,7 @@ class TonalButton extends StatelessWidget {
     required this.color,
     required this.fill,
     required this.onTap,
+    this.radius = 12,
   });
 
   /// Neutral grey button matching the app's card surfaces.
@@ -33,11 +35,14 @@ class TonalButton extends StatelessWidget {
 
   /// Soft red button for destructive actions.
   factory TonalButton.destructive(BuildContext context,
-      {required String label, required VoidCallback onTap}) {
+      {required String label,
+      required VoidCallback onTap,
+      double radius = 12}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return TonalButton(
       label: label,
       onTap: onTap,
+      radius: radius,
       color: isDark ? const Color(0xFFFF453A) : const Color(0xFFE5342B),
       fill: (isDark ? const Color(0xFFFF453A) : const Color(0xFFFF3B30))
           .withValues(alpha: isDark ? 0.16 : 0.10),
@@ -48,9 +53,9 @@ class TonalButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: fill,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(radius),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(radius),
         onTap: onTap,
         child: SizedBox(
           height: 48,
