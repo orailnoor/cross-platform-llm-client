@@ -8,6 +8,7 @@ class OpenAiServerService {
     int port = 8080,
     String? apiKey,
     bool allowNetwork = false,
+    bool allowNoKey = false,
     void Function(String)? onLog,
   }) async {
     throw UnsupportedError('Local API server is not available on this platform.');

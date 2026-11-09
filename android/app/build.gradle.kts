@@ -41,6 +41,9 @@ android {
             // llama.cpp armv9 (SVE2/SME) CPU variants abort on some phones
             // (Pixel 8); the loader never picks them, so don't ship them.
             excludes += setOf("**/libggml-cpu-android_armv9*.so")
+            // Bench build: libOpenCL.so is a link-time copy of the vendor
+            // library; at run time the system one must be used.
+            excludes += setOf("**/libOpenCL.so")
         }
     }
 
@@ -55,7 +58,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.orailnoor.privatelm"
+        applicationId = "com.orailnoor.privatelm.bench"
         minSdk = 28
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

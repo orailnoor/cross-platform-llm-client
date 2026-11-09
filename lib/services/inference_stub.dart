@@ -2,6 +2,8 @@
 /// (Web). All methods are no-ops that return appropriate errors.
 library;
 
+import 'generation_options.dart';
+
 bool get supportsLocalInference => false;
 
 bool get isRunning32Bit => false;
@@ -27,6 +29,8 @@ class LoadResult {
 
 class InferenceEngine {
   bool get ggufVisionLoaded => false;
+  GenerationStats? lastStats;
+  String mtpStatus = '';
 
   Future<LoadResult> loadModel({
     required String modelPath,
@@ -39,6 +43,11 @@ class InferenceEngine {
     bool enableLiteRtVision = false,
     bool allowGgufGpu = false,
     String? mmprojPath,
+    bool lazyVision = false,
+    bool mtpEnabled = false,
+    String? mtpDraftPath,
+    int mtpDraftTokens = 3,
+    Map<String, dynamic>? engineOptions,
     void Function(double)? onProgress,
   }) async {
     return LoadResult(
@@ -57,12 +66,26 @@ class InferenceEngine {
     String? imagePath,
     String? audioPath,
     String source = 'chat',
+    GenerationOptions options = GenerationOptions.none,
     void Function(String token)? onToken,
   }) async {
     return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';
   }
 
   Future<void> stop() async {}
+  Future<GenerationStats?> nativeStats() async => null;
+  Future<List<int>> tokenize(String text,
+          {bool addSpecial = true, bool parseSpecial = true}) async =>
+      const [];
+  Future<String> detokenize(List<int> tokens) async => '';
+  Future<List<double>> embed(String text) async => const [];
+  Future<Map<String, dynamic>> chatPrepare(Map<String, dynamic> request) async =>
+      const {'error': 'unsupported'};
+  Future<Map<String, dynamic>> chatParse(String text) async =>
+      const {'error': 'unsupported'};
+  Future<String> jsonSchemaToGrammar(Object schema) async => '';
+  Future<Map<String, dynamic>> mtpInfo() async => const {};
+  Future<void> resetConversation() async {}
   Future<dynamic> getContextInfo() async => null;
   Future<void> dispose() async {}
 }

@@ -30,6 +30,19 @@ set(GGML_NATIVE OFF CACHE BOOL "Cross-compiling: never tune for the build host" 
 #    a coordinator spreads model layers across the workers it adds.
 option(LLAMA_ANDROID_VULKAN "Build the Vulkan GPU backend" ON)
 option(LLAMA_ANDROID_RPC "Build the RPC backend (phone cluster)" ON)
+#  - libggml-opencl.so (bench build): Qualcomm's Adreno OpenCL backend. Linked
+#    against the device's libOpenCL.so only at build time (opencl/lib); at run
+#    time the system one is used (<uses-native-library> in the manifest).
+option(LLAMA_ANDROID_OPENCL "Build the OpenCL GPU backend (Adreno)" ON)
+if(LLAMA_ANDROID_OPENCL AND ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_OPENCL ON CACHE BOOL "Enable OpenCL backend" FORCE)
+    set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
+    set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
+    # Adreno 6xx drivers are OpenCL 2.0 (no 2.1/3.0 symbols to link against).
+    set(GGML_OPENCL_TARGET_VERSION "200" CACHE STRING "" FORCE)
+    set(OpenCL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/opencl/include" CACHE PATH "" FORCE)
+    set(OpenCL_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/opencl/lib/libOpenCL.so" CACHE FILEPATH "" FORCE)
+endif()
 if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_BACKEND_DL ON CACHE BOOL "Load backends at runtime" FORCE)
     set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "Build every Arm CPU variant" FORCE)
@@ -44,10 +57,29 @@ else()
     set(GGML_LLAMAFILE OFF CACHE BOOL "No FP16 NEON on ARMv7" FORCE)
 endif()
 
+if(GGML_VULKAN AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-pregen/ggml-vulkan-shaders.hpp")
+    # Shaders pre-generated on a Linux host (vulkan-shaders-gen + glslc), so
+    # this build needs no host compiler. defs.txt is the glslc feature set
+    # they were generated with; ggml-vulkan.cpp must be compiled to match.
+    set(GGML_VULKAN_PREGEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-pregen" CACHE PATH "" FORCE)
+    file(READ "${GGML_VULKAN_PREGEN_DIR}/defs.txt" _vk_defs)
+    string(REGEX MATCHALL "GGML_VULKAN_[A-Z0-9_]+_GLSLC_SUPPORT" _vk_defs "${_vk_defs}")
+    set(GGML_VULKAN_PREGEN_DEFS ${_vk_defs} CACHE STRING "" FORCE)
+    message(STATUS "Vulkan: pre-generated shaders, defs: ${_vk_defs}")
+endif()
+
 if(GGML_VULKAN)
     # The NDK ships vulkan.h but not vulkan.hpp/SPIR-V headers, and the
     # C++ headers must match vulkan.h exactly, so fetch one pinned set.
     include(FetchContent)
+    # Pre-extracted copies (same tags) win over the download: on Windows hosts
+    # CMake 3.22's FetchContent sub-build can loop on "build.ninja still dirty".
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vulkan-headers/include")
+        set(FETCHCONTENT_SOURCE_DIR_VULKAN_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vulkan-headers")
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/spirv-headers/include")
+        set(FETCHCONTENT_SOURCE_DIR_SPIRV_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/spirv-headers")
+    endif()
     # Plain HTTPS archives (not git): avoids git URL rewrites to SSH, which
     # hang a non-interactive Gradle build waiting for a key passphrase.
     FetchContent_Declare(vulkan_headers
@@ -147,7 +179,7 @@ add_subdirectory(src/main/cpp/llama.cpp)
 # On Android/NDK it must explicitly link libc++ or symbols such as operator new
 # and std::runtime_error stay unresolved during the native build.
 if(ANDROID)
-    foreach(target ggml-base ggml ggml-cpu ggml-vulkan ggml-rpc llama mtmd
+    foreach(target ggml-base ggml ggml-cpu ggml-vulkan ggml-opencl ggml-rpc llama mtmd
             ggml-cpu-android_armv8.0_1 ggml-cpu-android_armv8.2_1
             ggml-cpu-android_armv8.2_2 ggml-cpu-android_armv8.6_1
             ggml-cpu-android_armv9.0_1 ggml-cpu-android_armv9.2_1
@@ -158,12 +190,73 @@ if(ANDROID)
     endforeach()
 endif()
 
-# JNI wrapper library - simplified without common library
+# A subset of llama.cpp's common/ library, linked statically into the JNI
+# wrapper: Jinja chat templates + tool-call parsing (chat*.cpp, jinja/),
+# JSON-schema -> GBNF grammars, the sampler helpers and speculative decoding
+# (MTP draft heads). Argument parsing, downloads, HTTP and subprocess support
+# are left out, so no cpp-httplib/OpenSSL is needed.
+set(_lc "${CMAKE_CURRENT_SOURCE_DIR}/src/main/cpp/llama.cpp/common")
+include("${_lc}/parsers/sources.cmake")
+set(_lc_build_info "${CMAKE_CURRENT_BINARY_DIR}/llama-common-build-info.cpp")
+file(WRITE "${_lc_build_info}"
+"#include \"build-info.h\"
+#include <cstdio>
+#include <string>
+int LLAMA_BUILD_NUMBER = 0;
+char const * LLAMA_COMMIT = \"privatelm\";
+char const * LLAMA_COMPILER = \"ndk-clang\";
+char const * LLAMA_BUILD_TARGET = \"android\";
+int llama_build_number(void) { return LLAMA_BUILD_NUMBER; }
+const char * llama_commit(void) { return LLAMA_COMMIT; }
+const char * llama_compiler(void) { return LLAMA_COMPILER; }
+const char * llama_build_target(void) { return LLAMA_BUILD_TARGET; }
+const char * llama_build_info(void) { return \"b0-privatelm\"; }
+void llama_print_build_info(const char * v, FILE * s) { fprintf(s, \"version: %s\\n\", v); }
+")
+add_library(llama_common_lite STATIC
+    ${LLAMA_CHAT_PARSERS_SOURCES}
+    ${_lc_build_info}
+    ${_lc}/chat-auto-parser-generator.cpp
+    ${_lc}/chat-auto-parser-helpers.cpp
+    ${_lc}/chat-diff-analyzer.cpp
+    ${_lc}/chat-peg-parser.cpp
+    ${_lc}/chat.cpp
+    ${_lc}/common.cpp
+    ${_lc}/debug.cpp
+    ${_lc}/fit.cpp
+    ${_lc}/imatrix-loader.cpp
+    ${_lc}/json-schema-to-grammar.cpp
+    ${_lc}/json-schema.cpp
+    ${_lc}/json.cpp
+    ${_lc}/log.cpp
+    ${_lc}/ngram-cache.cpp
+    ${_lc}/ngram-map.cpp
+    ${_lc}/ngram-mod.cpp
+    ${_lc}/peg-parser.cpp
+    ${_lc}/reasoning-budget.cpp
+    ${_lc}/sampling.cpp
+    ${_lc}/speculative.cpp
+    ${_lc}/trie.cpp
+    ${_lc}/unicode.cpp
+    ${_lc}/jinja/lexer.cpp
+    ${_lc}/jinja/parser.cpp
+    ${_lc}/jinja/runtime.cpp
+    ${_lc}/jinja/value.cpp
+    ${_lc}/jinja/string.cpp
+    ${_lc}/jinja/caps.cpp
+)
+set_target_properties(llama_common_lite PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(llama_common_lite PUBLIC "${_lc}")
+target_compile_features(llama_common_lite PUBLIC cxx_std_17)
+target_link_libraries(llama_common_lite PUBLIC llama vendor::nlohmann vendor::sheredom)
+
+# JNI wrapper library
 add_library(llama_jni SHARED
     src/main/cpp/jni_wrapper.cpp
 )
 
 target_link_libraries(llama_jni
+    llama_common_lite
     mtmd
     llama
     ggml

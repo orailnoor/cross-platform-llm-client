@@ -171,8 +171,25 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     buf->size = size;
 
     if (device->buffer_device_address) {
-        const vk::BufferDeviceAddressInfo addressInfo(buf->buffer);
-        buf->bda_addr = device->device.getBufferAddress(addressInfo);
+        // PrivateLM: call through a pointer loaded from the device itself. On
+        // Mali-G78 the dispatcher's vkGetBufferDeviceAddress stays null, and the
+        // vulkan.hpp wrapper then jumps to address 0.
+        static PFN_vkGetBufferDeviceAddress get_bda = nullptr;
+        if (!get_bda) {
+            get_bda = (PFN_vkGetBufferDeviceAddress) vkGetDeviceProcAddr(device->device, "vkGetBufferDeviceAddress");
+            if (!get_bda) {
+                get_bda = (PFN_vkGetBufferDeviceAddress) vkGetDeviceProcAddr(device->device, "vkGetBufferDeviceAddressKHR");
+            }
+        }
+        if (get_bda) {
+            VkBufferDeviceAddressInfo info = {};
+            info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+            info.buffer = buf->buffer;
+            buf->bda_addr = get_bda(device->device, &info);
+        } else {
+            GGML_LOG_WARN("ggml_vulkan: no vkGetBufferDeviceAddress; buffer has no device address\n");
+            buf->bda_addr = 0;
+        }
     }
 
     device->memory_logger->log_allocation(buf, size);

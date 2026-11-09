@@ -4562,6 +4562,21 @@ vk_device ggml_vk_get_device(size_t idx) {
         device_create_info.setPNext(&device_features2);
         device->device = device->physical_device.createDevice(device_create_info);
 
+        // PrivateLM: some Android drivers (Mali-G78) report bufferDeviceAddress
+        // but the instance-level dispatcher has no vkGetBufferDeviceAddress, so
+        // the first buffer allocation calls a null pointer. Load it from the
+        // device (core or KHR name); without it, run without BDA.
+        if (device->buffer_device_address) {
+            PFN_vkVoidFunction fn = vkGetDeviceProcAddr(device->device, "vkGetBufferDeviceAddress");
+            if (!fn) fn = vkGetDeviceProcAddr(device->device, "vkGetBufferDeviceAddressKHR");
+            if (fn) {
+                VULKAN_HPP_DEFAULT_DISPATCHER.vkGetBufferDeviceAddress = (PFN_vkGetBufferDeviceAddress)fn;
+            } else {
+                GGML_LOG_WARN("ggml_vulkan: vkGetBufferDeviceAddress unavailable, disabling buffer device address\n");
+                device->buffer_device_address = false;
+            }
+        }
+
         if (device->device_fault) {
             device->pfn_vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)
                 vkGetDeviceProcAddr(device->device, "vkGetDeviceFaultInfoEXT");

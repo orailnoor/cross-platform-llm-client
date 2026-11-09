@@ -74,6 +74,13 @@ if (Vulkan_FOUND)
                           CXX_VISIBILITY_PRESET hidden
                           VISIBILITY_INLINES_HIDDEN ON)
 
+    if (GGML_VULKAN_PREGEN_DIR)
+        # PrivateLM: shaders were generated elsewhere (vulkan-pregen/), so use
+        # the glslc feature set they were generated with.
+        foreach (_def ${GGML_VULKAN_PREGEN_DEFS})
+            add_compile_definitions(${_def})
+        endforeach()
+    else()
     set(VULKAN_SHADER_GEN_CMAKE_ARGS "")
 
     # Test all shader extensions
@@ -118,6 +125,7 @@ if (Vulkan_FOUND)
         "${CMAKE_CURRENT_SOURCE_DIR}/vulkan-shaders/feature-tests/float_e4m3.comp"
         "GGML_VULKAN_FLOAT_E4M3_GLSLC_SUPPORT"
     )
+    endif()
 
     target_link_libraries(ggml-vulkan PRIVATE Vulkan::Vulkan)
     target_include_directories(ggml-vulkan PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -158,6 +166,14 @@ if (Vulkan_FOUND)
         target_link_libraries(ggml-vulkan PRIVATE ggml-cpu)
     endif()
 
+    if (GGML_VULKAN_PREGEN_DIR)
+        # Copy into the binary dir like generated files, so object paths stay
+        # inside the build tree.
+        file(GLOB _ggml_vk_pregen_src "${GGML_VULKAN_PREGEN_DIR}/*.comp.cpp" "${GGML_VULKAN_PREGEN_DIR}/ggml-vulkan-shaders.hpp")
+        file(COPY ${_ggml_vk_pregen_src} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+        file(GLOB _ggml_vk_pregen_cpp "${CMAKE_CURRENT_BINARY_DIR}/*.comp.cpp")
+        target_sources(ggml-vulkan PRIVATE ${_ggml_vk_pregen_cpp} "${CMAKE_CURRENT_BINARY_DIR}/ggml-vulkan-shaders.hpp")
+    else()
     # Set up toolchain for host compilation whether cross-compiling or not
     if (CMAKE_CROSSCOMPILING)
         if (GGML_VULKAN_SHADERS_GEN_TOOLCHAIN)
@@ -259,6 +275,7 @@ if (Vulkan_FOUND)
 
     source_group("Vulkan shaders" FILES ${_ggml_vk_shader_files})
     source_group("Generated Vulkan shaders" FILES ${_ggml_vk_generated_shader_files})
+    endif()
 else()
     message(WARNING "Vulkan not found")
 endif()

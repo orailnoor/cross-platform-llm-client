@@ -74,6 +74,7 @@ class ClusterChannel(
                     .putExtra(ClusterWorkerService.EXTRA_PORT,
                         call.argument<Int>("port") ?: ClusterWorkerService.DEFAULT_PORT)
                     .putExtra(ClusterWorkerService.EXTRA_THREADS, call.argument<Int>("threads") ?: 0)
+                    .putExtra(ClusterWorkerService.EXTRA_GPU, call.argument<Boolean>("gpu") ?: false)
                 ContextCompat.startForegroundService(context, intent)
                 result.success(null)
             }
@@ -103,6 +104,53 @@ class ClusterChannel(
                 ))
             }
             "localFreeRamMb" -> result.success(ClusterWorkerService.availableRamMb(context))
+            "setEngineOptions" -> {
+                ClusterNative.nativeSetEngineOptions(
+                    call.argument<Int>("swaFull") ?: 0,
+                    call.argument<Int>("flashAttn") ?: -1,
+                    call.argument<String>("typeK") ?: "",
+                    call.argument<String>("typeV") ?: "",
+                    call.argument<Int>("threads") ?: -1,
+                    call.argument<Int>("nBatch") ?: -1,
+                    call.argument<Int>("nUbatch") ?: -1,
+                    call.argument<Int>("gpuLayers") ?: -1,
+                    call.argument<Int>("localLayers") ?: -1,
+                    call.argument<Int>("opOffload") ?: -1,
+                    call.argument<Int>("repack") ?: -1,
+                )
+                ClusterNative.nativeSetCpuMask(call.argument<String>("cpuMask") ?: "")
+                result.success(null)
+            }
+            "bench" -> scope.launch(Dispatchers.IO) {
+                val json = try {
+                    ClusterNative.nativeBench(
+                        call.argument<Int>("depth") ?: 0,
+                        call.argument<Int>("pp") ?: 512,
+                        call.argument<Int>("tg") ?: 64,
+                    )
+                } catch (t: Throwable) {
+                    "{\"error\":\"${t.message}\"}"
+                }
+                withContext(Dispatchers.Main) { result.success(json) }
+            }
+            "memLog" -> result.success(ClusterNative.nativeMemLog())
+            "devices" -> scope.launch(Dispatchers.IO) {
+                val text = ClusterNative.nativeDevices(context.applicationInfo.nativeLibraryDir, call.argument<Boolean>("loadGpu") ?: false)
+                withContext(Dispatchers.Main) { result.success(text) }
+            }
+            "memInfo" -> {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+                val pss = try {
+                    am.getProcessMemoryInfo(intArrayOf(android.os.Process.myPid()))[0].totalPss.toLong()
+                } catch (_: Throwable) { -1L }
+                result.success(mapOf(
+                    "availMb" to mi.availMem / (1024 * 1024),
+                    "totalMb" to mi.totalMem / (1024 * 1024),
+                    "lowMemory" to mi.lowMemory,
+                    "pssMb" to pss / 1024,
+                ))
+            }
             "setKeepScreenOn" -> {
                 // A worker is only at full speed while PrivateLM is on screen
                 // (it borrows the app's priority), so keep the screen on.

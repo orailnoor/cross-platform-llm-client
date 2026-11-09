@@ -64,6 +64,33 @@ class AppConstants {
   static const String keyServerApiKey = 'server_api_key';
   static const String keyServerUseApiKey = 'server_use_api_key';
   static const String keyServerAllowNetwork = 'server_allow_network';
+  static const String keyServerNoApiKey = 'server_no_api_key'; // bool, default false
+  // OlliteRT-style server/app settings (all off by default).
+  static const String keyServerPort = 'server_port'; // int, default 8080
+  static const String keyDefaultModelPath = 'default_model_path';
+  static const String keyLoadModelOnStart = 'load_model_on_start';
+  static const String keyStartServerOnStart = 'start_server_on_start';
+  static const String keyStartOnBoot = 'start_on_boot';
+  static const String keyServerKeepAwake = 'server_keep_awake';
+  static const String keyKeepAliveMinutes = 'keep_alive_minutes'; // 0 = off
+  static const String keyCorsOrigins = 'cors_allowed_origins'; // comma list
+  static const String keyIgnoreClientSampler = 'ignore_client_sampler_params';
+  static const String keyDefaultSeed = 'default_seed'; // int, -1 = random
+  static const String keyForceStreamUsage = 'force_stream_usage';
+  static const String keyServerEmbeddings = 'server_embeddings_enabled';
+  // GGUF helper files.
+  static const String keyVisionLazyLoad = 'vision_lazy_load';
+  static const String keyMmprojOverrides = 'mmproj_overrides'; // {model: path|none}
+  static const String keyMtpEnabled = 'mtp_draft_enabled';
+  static const String keyMtpDraftTokens = 'mtp_draft_tokens'; // default 3
+  static const String keyMtpOverrides = 'mtp_overrides'; // {model: path|none}
+  // GGUF CPU engine (applied to every load; bench admin options override once).
+  static const String keyCpuThreads = 'cpu_threads'; // int, 0 = auto
+  static const String keyCpuAffinityMask = 'cpu_affinity_mask'; // hex, '' = off
+  static const String keyKvCacheType = 'kv_cache_type'; // f16 | q8_0 | q4_0
+  static const String keyCpuRepack = 'cpu_repack'; // bool, default true
+  static const int defaultServerPort = 8080;
+  static const int defaultMtpDraftTokens = 3;
   static const String keyClusterEnabled = 'cluster_enabled';
   static const String keyClusterWorkers = 'cluster_workers';
   static const String keyImageSteps = 'image_steps';

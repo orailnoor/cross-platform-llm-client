@@ -6,6 +6,9 @@ import 'device_info_service.dart';
 import 'app_log_service.dart';
 import 'cluster_service.dart';
 import 'stop_sequence_filter.dart';
+import 'companion_files.dart';
+import 'generation_options.dart';
+export 'generation_options.dart';
 
 // Conditionally import llama_flutter_android — only on Android
 import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart'
@@ -55,7 +58,52 @@ class InferenceService extends GetxService {
   String get sessionNativeRuntime => _sessionNativeRuntime;
 
   /// The loaded GGUF model has a working vision projector (images allowed).
+  /// With lazy vision on, also true while the projector waits for an image.
   bool get ggufVisionLoaded => _engine?.ggufVisionLoaded ?? false;
+
+  /// Stats of the last generate() call (null before the first one).
+  GenerationStats? get lastStats => _lastStats;
+  GenerationStats? _lastStats;
+
+  /// MTP status of the loaded GGUF model ('' when MTP is off).
+  String get mtpStatus => _engine?.mtpStatus ?? '';
+
+  /// Path of the loaded model ('' when none).
+  final loadedModelPath = ''.obs;
+
+  /// Vision projector chosen for the loaded GGUF model (null: none).
+  String? get loadedMmprojPath => _loadedMmprojPath;
+  String? _loadedMmprojPath;
+
+  // Keep-alive: the model is unloaded after this long without a request and
+  // reloaded by the next generate().
+  Timer? _keepAliveTimer;
+  _LoadArgs? _lastLoadArgs;
+  _LoadArgs? _idleUnloadedArgs;
+
+  /// The model was unloaded for being idle and reloads on the next request.
+  bool get isIdleUnloaded => _idleUnloadedArgs != null;
+  Future<String>? _reloading;
+
+  /// Set by the bench admin API after it pushed engine options for the next
+  /// load; that load then skips the global engine settings.
+  static bool externalEngineOptions = false;
+
+  /// Global CPU engine settings (Settings > Advanced), sent before every GGUF load.
+  Map<String, dynamic> _engineSettings() {
+    final threads = _hive.getSetting<int>(AppConstants.keyCpuThreads) ?? 0;
+    final kv = _hive.getSetting<String>(AppConstants.keyKvCacheType) ?? 'f16';
+    final repack = _hive.getSetting<bool>(AppConstants.keyCpuRepack) ?? true;
+    final mask =
+        (_hive.getSetting<String>(AppConstants.keyCpuAffinityMask) ?? '').trim();
+    return {
+      'threads': threads > 0 ? threads : -1,
+      'typeK': kv,
+      'typeV': kv,
+      'repack': repack ? -1 : 0,
+      'cpuMask': mask,
+    };
+  }
 
   Future<String> loadModel(
     String modelPath, {
@@ -64,6 +112,8 @@ class InferenceService extends GetxService {
     bool enableLiteRtVision = false,
     String? mmprojPath,
   }) async {
+    _idleUnloadedArgs = null;
+    _keepAliveTimer?.cancel();
     if (!supportsLocalInference) {
       return 'ERROR: Local inference is not available on this platform. Use Cloud mode.';
     }
@@ -141,6 +191,44 @@ class InferenceService extends GetxService {
 
       final requestedModelName = modelName ?? modelPath.split('/').last;
       var activeModelName = requestedModelName;
+
+      // GGUF helper files next to the model: vision projector (catalogue,
+      // per-model override, or found by name) and MTP draft head.
+      final modelFile = modelPath.split('/').last;
+      String? resolvedMmproj = mmprojPath;
+      bool mtpEnabled = false;
+      String? mtpDraftPath;
+      final mtpTokens = (_hive.getSetting<int>(AppConstants.keyMtpDraftTokens) ??
+              AppConstants.defaultMtpDraftTokens)
+          .clamp(1, 16);
+      if (!isLiteRt) {
+        resolvedMmproj = await CompanionFiles.applyOverride(
+          _overrideFor(AppConstants.keyMmprojOverrides, modelFile),
+          () async => mmprojPath ?? await CompanionFiles.findMmproj(modelPath),
+        );
+        if (resolvedMmproj != null) {
+          print('[InferenceService] Vision projector: $resolvedMmproj');
+        }
+        mtpEnabled = (_hive.getSetting<bool>(AppConstants.keyMtpEnabled) ??
+                false) &&
+            clusterWorkers == 0;
+        if (mtpEnabled) {
+          mtpDraftPath = await CompanionFiles.applyOverride(
+            _overrideFor(AppConstants.keyMtpOverrides, modelFile),
+            () => CompanionFiles.findMtp(modelPath),
+          );
+        }
+      }
+      final lazyVision =
+          _hive.getSetting<bool>(AppConstants.keyVisionLazyLoad) ?? false;
+      // Global GGUF engine settings, unless the bench admin API just pushed
+      // its own options for this one load.
+      Map<String, dynamic>? engineOptions;
+      if (externalEngineOptions) {
+        externalEngineOptions = false;
+      } else if (!isLiteRt) {
+        engineOptions = _engineSettings();
+      }
       var result = await _loadModelOnEngine(
         modelPath: modelPath,
         modelRuntime: modelRuntime,
@@ -153,7 +241,12 @@ class InferenceService extends GetxService {
         tryLiteRtGpu: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
         allowGgufGpu: allowGgufGpu && clusterWorkers == 0,
-        mmprojPath: mmprojPath,
+        mmprojPath: resolvedMmproj,
+        lazyVision: lazyVision,
+        mtpEnabled: mtpEnabled,
+        mtpDraftPath: mtpDraftPath,
+        mtpDraftTokens: mtpTokens,
+        engineOptions: engineOptions,
       );
 
       if (!result.success) {
@@ -190,6 +283,12 @@ class InferenceService extends GetxService {
       isGpuAccelerated.value = result.backend == 'gpu' || result.gpuLayers > 0;
       contextTokensUsed.value = 0;
       contextTokensTotal.value = finalContextSize;
+      loadedModelPath.value = modelPath;
+      _loadedMmprojPath = isLiteRt ? null : resolvedMmproj;
+      if (!isLiteRt) isVisionLoaded.value = ggufVisionLoaded;
+      _lastLoadArgs = _LoadArgs(modelPath, modelName, modelRuntime,
+          enableLiteRtVision, mmprojPath);
+      _armKeepAlive();
 
       await _hive.setSetting(AppConstants.keyLocalModelPath, modelPath);
       await _hive.setSetting(
@@ -221,8 +320,16 @@ class InferenceService extends GetxService {
   }
 
   Future<void> unloadModel() async {
+    _keepAliveTimer?.cancel();
+    _idleUnloadedArgs = null;
+    await _unloadEngine();
+  }
+
+  Future<void> _unloadEngine() async {
     final engine = _engine;
     _engine = null;
+    loadedModelPath.value = '';
+    _loadedMmprojPath = null;
     if (Get.isRegistered<ClusterService>()) {
       Get.find<ClusterService>().clearSplit();
     }
@@ -253,11 +360,18 @@ class InferenceService extends GetxService {
     String? audioPath,
     int? maxTokens,
     List<String> stopSequences = const [],
+    GenerationOptions options = GenerationOptions.none,
     void Function(String token)? onToken,
   }) async {
+    _lastStats = null;
+    if (_idleUnloadedArgs != null && !isModelLoaded.value) {
+      final reload = await reloadIfIdle();
+      if (reload != null && reload.startsWith('ERROR')) return reload;
+    }
     if (!supportsLocalInference || _engine == null || !isModelLoaded.value) {
       return 'ERROR: No model loaded. Go to Models tab to download and load one.';
     }
+    _keepAliveTimer?.cancel();
 
     if (isGenerating.value) {
       // Wait for previous generation
@@ -298,7 +412,8 @@ class InferenceService extends GetxService {
     var stopSequenceHit = false;
 
     try {
-      final temperature = _hive.getSetting<double>(
+      final temperature = options.temperature ??
+          _hive.getSetting<double>(
             AppConstants.keyTemperature,
             defaultValue: AppConstants.defaultTemperature,
           ) ??
@@ -309,9 +424,14 @@ class InferenceService extends GetxService {
             defaultValue: AppConstants.defaultMaxTokens,
           ) ??
           AppConstants.defaultMaxTokens;
-      final effectiveMaxTokens = (maxTokens != null && maxTokens > 0)
-          ? (maxTokens < settingMaxTokens ? maxTokens : settingMaxTokens)
-          : settingMaxTokens;
+      // The setting is only the default: a caller's max_tokens wins, capped
+      // by the context size (the native side also stops at a full context).
+      var effectiveMaxTokens =
+          (maxTokens != null && maxTokens > 0) ? maxTokens : settingMaxTokens;
+      final ctxTotal = contextTokensTotal.value;
+      if (ctxTotal > 0 && effectiveMaxTokens > ctxTotal) {
+        effectiveMaxTokens = ctxTotal;
+      }
 
       final result = await _engine!.generate(
         prompt: prompt,
@@ -323,6 +443,7 @@ class InferenceService extends GetxService {
         imagePath: imagePath,
         audioPath: audioPath,
         source: source,
+        options: options,
         onToken: (rawToken) {
           if (!isCurrent()) return;
           var token = rawToken;
@@ -368,6 +489,11 @@ class InferenceService extends GetxService {
       }
       flushTokenBuffer();
       final finalText = stopSequenceHit ? stopFilter.text : result;
+      _lastStats = _statsFor(_engine?.lastStats, prompt, finalText,
+          stopSequenceHit: stopSequenceHit,
+          maxTokens: effectiveMaxTokens,
+          emittedTokens: tokenCount.value);
+      _armKeepAlive();
 
       await refreshContextInfo();
       if (isCurrent()) {
@@ -472,6 +598,11 @@ class InferenceService extends GetxService {
     required bool enableLiteRtVision,
     bool allowGgufGpu = false,
     String? mmprojPath,
+    bool lazyVision = false,
+    bool mtpEnabled = false,
+    String? mtpDraftPath,
+    int mtpDraftTokens = 3,
+    Map<String, dynamic>? engineOptions,
   }) async {
     // Auto fast: if a LiteRT GPU load fails, retry this load on the CPU.
     // Nothing is remembered — the next load tries the GPU again.
@@ -505,6 +636,11 @@ class InferenceService extends GetxService {
         enableLiteRtVision: enableLiteRtVision,
         allowGgufGpu: allowGgufGpu,
         mmprojPath: mmprojPath,
+        lazyVision: lazyVision,
+        mtpEnabled: mtpEnabled,
+        mtpDraftPath: mtpDraftPath,
+        mtpDraftTokens: mtpDraftTokens,
+        engineOptions: engineOptions,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success || !fallbackToCpu) return result;
@@ -546,4 +682,168 @@ class InferenceService extends GetxService {
     if (runtime == 'litert' || runtime == 'llama') return runtime!;
     return modelPath.toLowerCase().endsWith('.litertlm') ? 'litert' : 'llama';
   }
+
+  // ── Helper files, keep-alive, stats, embeddings ──
+
+  String? _overrideFor(String key, String modelFile) {
+    final raw = _hive.getSetting<Map>(key);
+    final value = raw?[modelFile];
+    return value is String ? value : null;
+  }
+
+  /// Sets (or with null/'' clears) a per-model helper-file override:
+  /// a path, or [CompanionFiles.none] to turn the helper off.
+  Future<void> setHelperOverride(
+      String key, String modelFile, String? value) async {
+    final map = Map<String, dynamic>.from(_hive.getSetting<Map>(key) ?? {});
+    if (value == null || value.isEmpty) {
+      map.remove(modelFile);
+    } else {
+      map[modelFile] = value;
+    }
+    await _hive.setSetting(key, map);
+  }
+
+  String? helperOverride(String key, String modelFile) =>
+      _overrideFor(key, modelFile);
+
+  /// (Re)starts the keep-alive countdown after a load or a reply.
+  void _armKeepAlive() {
+    _keepAliveTimer?.cancel();
+    final minutes = _hive.getSetting<int>(AppConstants.keyKeepAliveMinutes) ?? 0;
+    if (minutes <= 0 || !isModelLoaded.value) return;
+    _keepAliveTimer = Timer(Duration(minutes: minutes), () async {
+      if (isGenerating.value || isLoadingModel.value || !isModelLoaded.value) {
+        _armKeepAlive();
+        return;
+      }
+      final args = _lastLoadArgs;
+      if (args == null) return;
+      Get.find<AppLogService>().info('Keep-alive: unloading idle model',
+          details: '${loadedModelName.value} after $minutes min');
+      await _unloadEngine();
+      _idleUnloadedArgs = args;
+    });
+  }
+
+  /// Settings changed: restart the countdown with the new value.
+  void refreshKeepAlive() => _armKeepAlive();
+
+  /// Reloads a model the keep-alive unloaded. Returns the load message, or
+  /// null when nothing had to be reloaded. Concurrent callers share one load.
+  Future<String?> reloadIfIdle() async {
+    final args = _idleUnloadedArgs;
+    if (args == null || isModelLoaded.value) return null;
+    final pending = _reloading;
+    if (pending != null) return pending;
+    final future = loadModel(args.path,
+        modelName: args.name,
+        modelRuntime: args.runtime,
+        enableLiteRtVision: args.liteRtVision,
+        mmprojPath: args.mmproj);
+    _reloading = future;
+    try {
+      final result = await future;
+      if (!isModelLoaded.value) _idleUnloadedArgs = args;
+      return result;
+    } finally {
+      _reloading = null;
+    }
+  }
+
+  GenerationStats _statsFor(
+    GenerationStats? native,
+    String prompt,
+    String text, {
+    required bool stopSequenceHit,
+    required int maxTokens,
+    required int emittedTokens,
+  }) {
+    if (native != null) {
+      var finish = native.finish;
+      if (stopSequenceHit || finish == 'abort' || finish == 'error') {
+        finish = 'stop';
+      }
+      return GenerationStats(
+        promptTokens: native.promptTokens,
+        completionTokens: native.completionTokens,
+        cachedTokens: native.cachedTokens,
+        finish: finish,
+        mtpDrafted: native.mtpDrafted,
+        mtpAccepted: native.mtpAccepted,
+        promptMs: native.promptMs,
+        genMs: native.genMs,
+      );
+    }
+    final completion = emittedTokens > 0 ? emittedTokens : (text.length / 4).ceil();
+    return GenerationStats(
+      promptTokens: (prompt.length / 4).ceil(),
+      completionTokens: completion,
+      finish: !stopSequenceHit && completion >= maxTokens ? 'length' : 'stop',
+      estimated: true,
+    );
+  }
+
+  /// Exact prompt-token count of the generation running/just stopped (GGUF).
+  Future<int?> nativePromptTokens() async =>
+      (await _engine?.nativeStats())?.promptTokens;
+
+  bool get _isGguf =>
+      _engine != null && isModelLoaded.value && loadedModelRuntime.value != 'litert';
+
+  /// GGUF tokenizer. Null when no GGUF model is loaded.
+  Future<List<int>?> tokenize(String text,
+      {bool addSpecial = true, bool parseSpecial = true}) async {
+    if (!_isGguf) return null;
+    return _engine!.tokenize(text, addSpecial: addSpecial, parseSpecial: parseSpecial);
+  }
+
+  Future<String?> detokenize(List<int> tokens) async {
+    if (!_isGguf) return null;
+    return _engine!.detokenize(tokens);
+  }
+
+  /// Pooled embedding from the loaded GGUF model (clears its chat cache).
+  /// Null when no GGUF model is loaded.
+  Future<List<double>?> embed(String text) async {
+    if (!_isGguf) return null;
+    if (isGenerating.value) throw StateError('Model is busy');
+    isGenerating.value = true;
+    generationSource.value = 'embeddings';
+    try {
+      return await _engine!.embed(text);
+    } finally {
+      isGenerating.value = false;
+      generationSource.value = '';
+      _armKeepAlive();
+    }
+  }
+
+  /// GGUF chat template render with tools (see LlamaExt.chatPrepare).
+  Future<Map<String, dynamic>?> chatPrepare(Map<String, dynamic> request) async {
+    if (!_isGguf) return null;
+    return _engine!.chatPrepare(request);
+  }
+
+  Future<Map<String, dynamic>?> chatParse(String text) async {
+    if (!_isGguf) return null;
+    return _engine!.chatParse(text);
+  }
+
+  Future<String?> jsonSchemaToGrammar(Object schema) async {
+    if (!_isGguf) return null;
+    return _engine!.jsonSchemaToGrammar(schema);
+  }
+
+  Future<Map<String, dynamic>> mtpInfo() async =>
+      await _engine?.mtpInfo() ?? const {};
+}
+
+class _LoadArgs {
+  final String path;
+  final String? name;
+  final String? runtime;
+  final bool liteRtVision;
+  final String? mmproj;
+  _LoadArgs(this.path, this.name, this.runtime, this.liteRtVision, this.mmproj);
 }

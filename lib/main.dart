@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show File;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:llama_flutter_android/llama_flutter_android.dart' show LlamaExt;
 // import 'firebase_options.dart';
 import 'controllers/settings_controller.dart';
 import 'controllers/cloud_model_controller.dart';
@@ -17,6 +19,7 @@ import 'core/routes.dart';
 import 'services/hive_service.dart';
 import 'services/inference_service.dart';
 import 'services/cluster_service.dart';
+import 'services/bench_admin.dart';
 import 'services/cloud_service.dart';
 import 'services/download_service.dart';
 import 'services/update_service.dart';
@@ -55,12 +58,14 @@ void main() {
     }
 
     // Support phones and tablets in portrait or landscape.
+    // Not awaited: the platform answers only once an Activity is attached, so
+    // a headless start (start on boot, no UI) would wait here forever.
     if (!kIsWeb) {
-      await SystemChrome.setPreferredOrientations([
+      unawaited(SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
-      ]);
+      ]).catchError((_) {}));
     }
 
     // Initialize Hive
@@ -117,14 +122,21 @@ void main() {
     };
     final imageNotifications = Get.put(ImageGenerationNotificationService());
     try {
-      await imageNotifications.init();
-      await imageNotifications.configureBackgroundService();
+      // Bounded: a headless start has no Activity for permission prompts.
+      await Future(() async {
+        await imageNotifications.init();
+        await imageNotifications.configureBackgroundService();
+      }).timeout(const Duration(seconds: 10));
     } catch (e) {
       appLog.error('[Notifications] Init failed', details: e);
     }
     appLog.info('Notifications initialized');
     Get.put(ServerController(), permanent: true);
     Get.put(ModelController());
+    // Bench build: PC-driven control API (see BenchAdmin).
+    if (ClusterService.isSupported) {
+      unawaited(Get.put(BenchAdmin(), permanent: true).start());
+    }
     appLog.info('All services initialized, launching app');
 
     // Auto-configure inference settings based on device RAM
@@ -134,6 +146,10 @@ void main() {
     _validateLastModel();
 
     runApp(const PrivateLMApp());
+
+    // Opt-in: load the default model and start the API server (also used
+    // by start-on-boot, which runs this same main() headless).
+    unawaited(_autoStartOnce());
 
     // Apply system UI after frame is rendered so Get.mediaQuery is available
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -160,6 +176,53 @@ void main() {
       parent.print(zone, line);
     },
   ));
+}
+
+bool _autoStarted = false;
+
+/// Settings "Load model on app start" / "Start API server on app start"
+/// (both off by default). Runs once per process; a missing model file is
+/// logged and skipped.
+Future<void> _autoStartOnce() async {
+  if (_autoStarted || kIsWeb) return;
+  _autoStarted = true;
+  final hive = Get.find<HiveService>();
+  final log = Get.find<AppLogService>();
+  try {
+    if (GetPlatform.isAndroid) {
+      // Keep the native boot flag in sync with the Hive setting.
+      await LlamaExt.setStartOnBoot(
+          hive.getSetting<bool>(AppConstants.keyStartOnBoot) ?? false);
+    }
+  } catch (_) {}
+  final loadOnStart = hive.getSetting<bool>(AppConstants.keyLoadModelOnStart) ?? false;
+  final serverOnStart =
+      hive.getSetting<bool>(AppConstants.keyStartServerOnStart) ?? false;
+  if (!loadOnStart && !serverOnStart) return;
+  final inference = Get.find<InferenceService>();
+  if (loadOnStart && !inference.isModelLoaded.value && !inference.isLoadingModel.value) {
+    final path = hive.getSetting<String>(AppConstants.keyDefaultModelPath) ?? '';
+    if (path.isEmpty || !File(path).existsSync()) {
+      log.warning('Auto-load skipped: default model not found', details: path);
+    } else {
+      log.info('Auto-loading default model', details: path);
+      final result = await inference.loadModel(path, modelName: path.split('/').last);
+      log.info('Auto-load: $result');
+      if (inference.isModelLoaded.value && Get.isRegistered<SettingsController>()) {
+        try {
+          await Get.find<SettingsController>().setInferenceMode('local');
+        } catch (_) {}
+      }
+    }
+  }
+  if (serverOnStart && Get.isRegistered<ServerController>()) {
+    if (inference.isModelLoaded.value) {
+      await Get.find<ServerController>().startServer(silent: true);
+      log.info('Auto-started API server');
+    } else {
+      log.warning('API server not auto-started: no model loaded');
+    }
+  }
 }
 
 /// Validates that remembered models still exist on disk.

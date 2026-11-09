@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../controllers/server_controller.dart';
 import '../core/ui.dart';
 import '../core/haptics.dart';
+import 'advanced_settings_view.dart';
 
 class ServerView extends GetView<ServerController> {
   const ServerView({super.key});
@@ -69,14 +70,25 @@ class ServerView extends GetView<ServerController> {
               AppRow(
                 icon: Icons.key_outlined,
                 title: 'Require API key',
-                subtitle: allowNetwork
-                    ? 'Always on while network access is enabled'
-                    : 'Clients send Authorization: Bearer <key>',
+                subtitle: controller.noApiKey.value
+                    ? 'Off: "No API key" is on (Port, start-up & advanced)'
+                    : allowNetwork
+                        ? 'Always on while network access is enabled'
+                        : 'Clients send Authorization: Bearer <key>',
                 trailing: Switch(
                   value: controller.requiresApiKey,
-                  onChanged:
-                      allowNetwork ? null : (v) => controller.setUseApiKey(v),
+                  onChanged: (allowNetwork || controller.noApiKey.value)
+                      ? null
+                      : (v) => controller.setUseApiKey(v),
                 ),
+              ),
+              AppRow(
+                icon: Icons.settings_suggest_outlined,
+                title: 'Port, start-up & advanced',
+                subtitle: 'Port ${ServerController.port} · auto-start, keep-awake, '
+                    'keep-alive, CORS, sampler overrides',
+                chevron: true,
+                onTap: () => Get.to(() => const AdvancedSettingsView()),
               ),
             ]),
             const SizedBox(height: 12),
