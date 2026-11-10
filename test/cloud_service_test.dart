@@ -22,6 +22,8 @@ void main() {
   late Directory dir;
   late HttpServer server;
   late CloudService cloud;
+  late String? authorization;
+  late String requestPath;
   // What the fake provider streams back for the next request.
   late Future<void> Function(HttpResponse res) respond;
 
@@ -34,6 +36,8 @@ void main() {
 
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((req) async {
+      authorization = req.headers.value(HttpHeaders.authorizationHeader);
+      requestPath = req.uri.path;
       await req.drain<void>();
       req.response.headers.contentType =
           ContentType('text', 'event-stream', charset: 'utf-8');
@@ -73,6 +77,55 @@ void main() {
     final tokens = <String>[];
     expect(await send(tokens), 'Hello world');
     expect(tokens.join(), 'Hello world');
+  });
+
+  test('a local OpenAI-compatible server works without authentication', () async {
+    final hive = Get.find<HiveService>();
+    await hive.setSetting(AppConstants.keyCustomCloudKey, '');
+    await hive.setSetting(AppConstants.keyCustomCloudBaseUrl,
+        'http://127.0.0.1:${server.port}/v1');
+    expect(cloud.isConfigured, isTrue);
+    respond = (res) async {
+      res.write(_chunk('Local reply', finish: 'stop'));
+      res.write('data: [DONE]\n\n');
+      await res.close();
+    };
+    expect(await send([]), 'Local reply');
+    expect(authorization, isNull);
+    expect(requestPath, '/v1/chat/completions');
+  });
+
+  test('non-streaming local requests also allow an empty API key', () async {
+    await Get.find<HiveService>().setSetting(AppConstants.keyCustomCloudKey, '');
+    respond = (res) async {
+      res.write(jsonEncode({
+        'choices': [
+          {'message': {'content': 'Local reply'}}
+        ]
+      }));
+      await res.close();
+    };
+    expect(await cloud.sendMessage(messages: [
+      {'role': 'user', 'content': 'hi'}
+    ]), 'Local reply');
+    expect(authorization, isNull);
+  });
+
+  test('configured local server authentication is retained', () async {
+    respond = (res) async {
+      res.write(_chunk('Authenticated', finish: 'stop'));
+      res.write('data: [DONE]\n\n');
+      await res.close();
+    };
+    expect(await send([]), 'Authenticated');
+    expect(authorization, 'Bearer test-key');
+  });
+
+  test('hosted providers still require an API key', () async {
+    await Get.find<HiveService>()
+        .setSetting(AppConstants.keyCloudProvider, 'openai');
+    expect(cloud.isConfigured, isFalse);
+    expect(await send([]), startsWith('ERROR: No API key'));
   });
 
   test('an error event mid-stream is reported, not shown as a reply',

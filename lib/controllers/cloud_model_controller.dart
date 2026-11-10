@@ -192,14 +192,15 @@ class CloudModelController extends GetxController {
   bool isConfigured(String provider) {
     if (provider == 'custom') {
       return _settings.customCloudBaseUrl.value.isNotEmpty &&
-          _settings.customCloudModel.value.isNotEmpty &&
-          _settings.customCloudKey.value.isNotEmpty;
+          _settings.customCloudModel.value.isNotEmpty;
     }
     return apiKeyFor(provider).isNotEmpty;
   }
 
   String statusLabel(String provider) {
-    return isConfigured(provider) ? 'Connected' : 'Needs Key';
+    return isConfigured(provider)
+        ? 'Connected'
+        : provider == 'custom' ? 'Needs setup' : 'Needs Key';
   }
 
   List<String> filteredModelsFor(String provider) {
@@ -285,8 +286,7 @@ class CloudModelController extends GetxController {
 
   bool canSelectModel(String provider) {
     if (provider == 'custom') {
-      return _settings.customCloudBaseUrl.value.isNotEmpty &&
-          _settings.customCloudKey.value.isNotEmpty;
+      return _settings.customCloudBaseUrl.value.isNotEmpty;
     }
     return apiKeyFor(provider).isNotEmpty;
   }
@@ -350,7 +350,6 @@ class CloudModelController extends GetxController {
 
   String? validateCustomProvider() {
     final baseUrl = customBaseUrlController.text.trim();
-    final apiKey = customApiKeyController.text.trim();
     final model = customModelController.text.trim();
 
     if (baseUrl.isEmpty) return 'Base URL is required.';
@@ -361,7 +360,6 @@ class CloudModelController extends GetxController {
         uri.host.isEmpty) {
       return 'Enter a valid OpenAI-compatible base URL.';
     }
-    if (apiKey.isEmpty) return 'API key is required.';
     if (model.isEmpty) return 'Model ID is required.';
     return null;
   }

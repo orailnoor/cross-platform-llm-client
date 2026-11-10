@@ -11,9 +11,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:uuid/uuid.dart';
-import 'package:gal/gal.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
+import '../core/platform_capabilities.dart';
 import '../core/ui.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
@@ -25,6 +25,7 @@ import '../services/local_image_service.dart';
 import '../services/app_log_service.dart';
 import '../services/image_generation_notification_service.dart';
 import '../services/document_extractor_service.dart';
+import '../services/image_export_service.dart';
 import '../utils/thought_parser.dart';
 
 const int _visionImageMaxSide = 768;
@@ -115,6 +116,7 @@ class ChatController extends GetxController {
   }
 
   Future<void> _initSpeech() async {
+    if (!PlatformCapabilities.supportsSpeechRecognition) return;
     try {
       sttAvailable.value = await _speech.initialize(
         onError: (_) => isListening.value = false,
@@ -130,6 +132,11 @@ class ChatController extends GetxController {
   }
 
   Future<void> toggleListening() async {
+    if (!PlatformCapabilities.supportsSpeechRecognition) {
+      showToast('Speech recognition unavailable',
+          'Type your message on this platform.', tone: ToastTone.warning);
+      return;
+    }
     try {
       if (isListening.value) {
         await _speech.stop();
@@ -229,6 +236,36 @@ class ChatController extends GetxController {
   // ─── Image Handling ─────────────────────────────
 
   Future<void> pickImage({ImageSource source = ImageSource.gallery}) async {
+    if (PlatformCapabilities.isWindows) {
+      if (source == ImageSource.camera) {
+        showToast('Camera unavailable', 'Choose an image file instead.',
+            tone: ToastTone.warning);
+        return;
+      }
+      try {
+        final result = await FilePicker.pickFiles(type: FileType.image);
+        if (result == null) return;
+        final file = result.files.single;
+        final path = file.path;
+        if (path == null) throw StateError('The selected image has no path.');
+        final preparedPath = await _prepareVisionImagePath(
+          bytes: await File(path).readAsBytes(),
+          originalName: file.name,
+        );
+        selectedImagePath.value = preparedPath;
+        selectedImageBase64.value = null;
+        selectedFileName.value = file.name;
+        selectedFilePath.value = preparedPath;
+        selectedFileType.value = 'image';
+        selectedFileSize.value = await File(preparedPath).length();
+        selectedFileContent.value = null;
+        _checkVisionSupport();
+      } catch (e) {
+        Get.find<AppLogService>().warning('Image attachment failed', details: e);
+        showToast('Image not attached', '$e', tone: ToastTone.error);
+      }
+      return;
+    }
     final picker = ImagePicker();
     final file = await picker.pickImage(
       source: source,
@@ -394,7 +431,6 @@ class ChatController extends GetxController {
         final optimizedPath = await _prepareVisionImagePath(
           bytes: bytes,
           originalName: file.name,
-          fallbackPath: file.path,
         );
 
         selectedFileName.value = file.name;
@@ -477,23 +513,15 @@ class ChatController extends GetxController {
   Future<String> _prepareVisionImagePath({
     required Uint8List bytes,
     required String originalName,
-    String? fallbackPath,
   }) async {
     final resized = await compute(_resizeVisionImageBytes, {'bytes': bytes});
     if (resized == null) {
-      if (fallbackPath != null && fallbackPath.isNotEmpty) return fallbackPath;
       final tempDir = await getTemporaryDirectory();
       final failedDecodeFile = File(
         '${tempDir.path}/ai_chat_image_${DateTime.now().millisecondsSinceEpoch}_$originalName',
       );
       await failedDecodeFile.writeAsBytes(bytes, flush: false);
       return failedDecodeFile.path;
-    }
-
-    if (resized.length == bytes.length &&
-        fallbackPath != null &&
-        fallbackPath.isNotEmpty) {
-      return fallbackPath;
     }
 
     final tempDir = await getTemporaryDirectory();
@@ -544,21 +572,11 @@ class ChatController extends GetxController {
   Future<void> downloadLastBatch() async {
     if (lastBatchImagesBase64.isEmpty) return;
     try {
-      final hasAccess = await Gal.hasAccess();
-      if (!hasAccess) {
-        final granted = await Gal.requestAccess();
-        if (!granted) {
-          showToast(
-              'Permission Denied', 'Cannot save images without gallery access.',
-              tone: ToastTone.error);
-          return;
-        }
-      }
-      for (final base64 in lastBatchImagesBase64) {
-        await Gal.putImageBytes(base64Decode(base64));
-      }
+      final destination = await ImageExportService.saveImages(
+          lastBatchImagesBase64.map(base64Decode).toList());
+      if (destination == null) return;
       showToast(
-          'Success', 'Saved ${lastBatchImagesBase64.length} images to gallery.',
+          'Success', 'Saved ${lastBatchImagesBase64.length} images to $destination.',
           tone: ToastTone.success);
       lastBatchImagesBase64.clear();
     } catch (e) {
@@ -671,11 +689,7 @@ class ChatController extends GetxController {
         }
       }
 
-      final inferenceMode = _hive.getSetting(
-            AppConstants.keyInferenceMode,
-            defaultValue: 'local',
-          ) ??
-          'local';
+      final inferenceMode = Get.find<SettingsController>().inferenceMode.value;
 
       String rawResponse;
 

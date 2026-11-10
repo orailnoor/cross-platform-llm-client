@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../controllers/server_controller.dart';
 import '../core/ui.dart';
 import '../core/haptics.dart';
+import '../core/platform_capabilities.dart';
 
 class ServerView extends GetView<ServerController> {
   const ServerView({super.key});
@@ -15,6 +16,22 @@ class ServerView extends GetView<ServerController> {
   @override
   Widget build(BuildContext context) {
     final t = AppTokens.of(context);
+    if (!PlatformCapabilities.supportsModelHosting) {
+      return Scaffold(
+        backgroundColor: t.bg,
+        appBar: appScreenBar(context, title: 'Server'),
+        body: const Padding(
+          padding: EdgeInsets.all(16),
+          child: AppNotice(
+            'API model hosting is currently supported on Android and iOS only. '
+            'On Windows, load GGUF models in Models and configure master/worker '
+            'sharing in Settings > Device cluster. To connect to an external '
+            'server, use Models > Cloud > Custom API.',
+            icon: Icons.computer_outlined,
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: t.bg,

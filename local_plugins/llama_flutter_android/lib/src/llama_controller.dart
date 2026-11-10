@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'llama_api.dart';
+import 'windows_runtime_stub.dart'
+    if (dart.library.io) 'windows_runtime.dart' as windows;
 
 /// User-friendly controller for llama.cpp
 class LlamaController implements LlamaFlutterApi {
-  final _api = LlamaHostApi();
+  late final LlamaHostApi _api;
   StreamController<String>? _tokenController;
   final _progressController = StreamController<double>.broadcast();
   
@@ -12,11 +14,14 @@ class LlamaController implements LlamaFlutterApi {
   bool _isGenerating = false;
 
   LlamaController({BinaryMessenger? binaryMessenger}) {
+    _api = windows.createHostApi(this);
     LlamaFlutterApi.setUp(
       this,
       binaryMessenger: binaryMessenger,
     );
   }
+
+  int? get loadedGpuLayers => windows.loadedGpuLayers;
 
   /// Load a GGUF model, plus its vision projector when [mmprojPath] is set.
   ///

@@ -1,4 +1,6 @@
 import 'package:flutter/services.dart';
+import 'windows_runtime_stub.dart'
+    if (dart.library.io) 'windows_runtime.dart' as windows;
 
 /// A phone running as a cluster worker, found on the local network, scanned
 /// from its QR code, or added by hand.
@@ -68,6 +70,8 @@ class ClusterWorkerStatus {
   final int heldMb;
   final int ramMb;
   final double bandwidth;
+  /// Actual Windows worker memory backend: "gpu" or "ram".
+  final String? memoryBackend;
 
   /// Android is throttling the worker (slow cores, low CPU share).
   final bool throttled;
@@ -85,6 +89,7 @@ class ClusterWorkerStatus {
     this.heldMb = 0,
     this.ramMb = 0,
     this.bandwidth = 0,
+    this.memoryBackend,
     this.throttled = false,
     this.batteryUnrestricted = true,
     this.id,
@@ -101,13 +106,20 @@ class ClusterWorkerStatus {
 /// The RPC protocol has no authentication: only run workers on a network you
 /// trust.
 class LlamaCluster {
-  static const _channel = MethodChannel('llama_flutter_android/cluster');
+  static final _channel = windows.createClusterChannel();
   static const defaultPort = 50052;
 
-  /// Starts serving this phone's CPU to a master, in a foreground service
-  /// that keeps running in the background.
-  static Future<void> startWorker({int port = defaultPort, int? threads}) =>
-      _channel.invokeMethod('startWorker', {'port': port, 'threads': threads});
+  /// Starts sharing this device with a master. Android uses a foreground
+  /// service that keeps running in the background.
+  /// Windows: [useGpu] defaults to GPU VRAM when available; false selects
+  /// system RAM and CPU compute. Other platforms keep their existing backend.
+  static Future<void> startWorker(
+          {int port = defaultPort, int? threads, bool? useGpu}) =>
+      _channel.invokeMethod('startWorker', {
+        'port': port,
+        'threads': threads,
+        if (useGpu != null) 'useGpu': useGpu,
+      });
 
   static Future<void> stopWorker() => _channel.invokeMethod('stopWorker');
 
@@ -120,6 +132,7 @@ class LlamaCluster {
       heldMb: (m['heldMb'] as num?)?.toInt() ?? 0,
       ramMb: (m['ramMb'] as num?)?.toInt() ?? 0,
       bandwidth: (m['bandwidth'] as num?)?.toDouble() ?? 0,
+      memoryBackend: m['memoryBackend'] as String?,
       throttled: m['throttled'] as bool? ?? false,
       batteryUnrestricted: m['batteryUnrestricted'] as bool? ?? true,
       id: m['id'] as String?,

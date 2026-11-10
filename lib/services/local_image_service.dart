@@ -138,6 +138,12 @@ class LocalImageService extends GetxService {
 
   Future<String> loadModel(String modelPath,
       {String? modelName, String? taesdPath}) async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      const message =
+          'ERROR: On-device image generation is available on Android and iOS only.';
+      Get.find<AppLogService>().warning(message);
+      return message;
+    }
     if (isLoadingModel.value) return 'ERROR: Model is already loading.';
     if (_nativeJobRunning) {
       return 'ERROR: An image is still generating. Wait for it to finish, '

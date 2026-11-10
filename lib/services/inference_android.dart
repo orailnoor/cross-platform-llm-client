@@ -6,7 +6,8 @@ import 'package:flutter_litert_lm/flutter_litert_lm.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
 
 /// Whether the current platform supports local inference.
-bool get supportsLocalInference => Platform.isAndroid || Platform.isIOS;
+bool get supportsLocalInference =>
+    Platform.isAndroid || Platform.isIOS || Platform.isWindows;
 
 /// True when the app runs as a 32-bit process (32-bit Android, e.g. Android
 /// Go phones). LiteRT ships 64-bit only, and the address space limits model
@@ -126,7 +127,7 @@ class InferenceEngine {
             mmprojPath == null ? 0 : await _fileLength(mmprojPath);
         final needed = ((modelBytes + visionBytes) * 1.25).round();
         final free = gpu.freeRamBytes;
-        if (free > 0 && needed > free) {
+        if (!Platform.isWindows && free > 0 && needed > free) {
           print('[Inference] Model needs ~${needed ~/ (1024 * 1024)}MB for GPU '
               'offload but only ${free ~/ (1024 * 1024)}MB is free — using CPU');
         } else {
@@ -185,6 +186,7 @@ class InferenceEngine {
       mmprojPath: mmprojPath,
     );
     _hasLoadedModel = true;
+    gpuLayers = _controller!.loadedGpuLayers ?? gpuLayers;
     _ggufVisionLoaded = mmprojPath != null && visionError == null;
     if (visionError != null) {
       print('[Inference] Vision projector not loaded: $visionError');

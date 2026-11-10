@@ -8,6 +8,7 @@
 #  endif
 #  include <windows.h>
 #  include <winsock2.h>
+#  include <ws2tcpip.h>
 #else
 #  include <arpa/inet.h>
 #  include <sys/socket.h>
@@ -642,20 +643,20 @@ static bool set_reuse_addr(sockfd_t sockfd) {
 }
 
 socket_ptr socket_t::accept() {
-#ifndef _WIN32
     // PrivateLM patch: log the client's address so the app can show which
     // master a cluster worker is serving.
     sockaddr_in peer = {};
+#ifdef _WIN32
+    int peer_len = sizeof(peer);
+#else
     socklen_t peer_len = sizeof(peer);
+#endif
     auto client_socket_fd = ::accept(pimpl->fd, (sockaddr *)&peer, &peer_len);
     if (is_valid_fd(client_socket_fd)) {
         char ip[INET_ADDRSTRLEN] = "?";
         inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         GGML_LOG_INFO("RPC client connected: %s\n", ip);
     }
-#else
-    auto client_socket_fd = ::accept(pimpl->fd, NULL, NULL);
-#endif
     if (!is_valid_fd(client_socket_fd)) {
         return nullptr;
     }

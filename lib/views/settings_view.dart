@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/settings_controller.dart';
 import '../core/constants.dart';
+import '../core/platform_capabilities.dart';
 import '../core/ui.dart';
 import '../widgets/home_empty_state.dart' show providerLabel;
 import '../services/inference_service.dart';
@@ -90,12 +91,14 @@ class SettingsView extends GetView<SettingsController> {
                     ]),
               ),
             ]),
-            const SectionHeader('Performance'),
+            if (PlatformCapabilities.supportsLocalInference)
+              const SectionHeader('Performance'),
+            if (PlatformCapabilities.supportsLocalInference)
             AppGroup(dividerIndent: 60, children: [
               _navRow(
                 context,
                 icon: Icons.speed_rounded,
-                title: 'GGUF & LiteRT',
+                title: PlatformCapabilities.isWindows ? 'GGUF acceleration' : 'GGUF & LiteRT',
                 value: switch (controller.liteRtPerformanceMode.value) {
                   'gpu_fast' => 'GPU fast',
                   'cpu_safe' => 'CPU safe',
@@ -103,7 +106,7 @@ class SettingsView extends GetView<SettingsController> {
                 },
                 builder: (ctx) => _buildLiteRtGroup(ctx),
               ),
-              _navRow(
+              if (PlatformCapabilities.supportsLocalImageGeneration) _navRow(
                 context,
                 icon: Icons.image_outlined,
                 title: 'Image generation',
@@ -112,10 +115,13 @@ class SettingsView extends GetView<SettingsController> {
                     : 'GPU',
                 builder: (ctx) => _buildImageGenerationGroup(ctx),
               ),
+              if (PlatformCapabilities.isWindows &&
+                  Get.isRegistered<ClusterService>())
+                _buildWorkerMemoryRow(),
               if (Get.isRegistered<ClusterService>())
                 AppRow(
                   icon: Icons.hub_outlined,
-                  title: 'Phone cluster',
+                  title: 'Device cluster',
                   trailing: Text(
                       switch (Get.find<ClusterService>().role) {
                         ClusterRole.master => 'Master',
@@ -159,6 +165,24 @@ class SettingsView extends GetView<SettingsController> {
           ],
         );
       }),
+    );
+  }
+
+  Widget _buildWorkerMemoryRow() {
+    final cluster = Get.find<ClusterService>();
+    final sharing = cluster.role == ClusterRole.worker;
+    return AppRow(
+      icon: Icons.memory_rounded,
+      title: 'Use GPU memory for workers',
+      subtitle: sharing
+          ? 'Set Device cluster to Off before changing memory.'
+          : cluster.workerUsesGpu.value
+              ? 'GPU VRAM and GPU compute when available.'
+              : 'System RAM and CPU compute. More capacity, but usually slower.',
+      trailing: Switch(
+        value: cluster.workerUsesGpu.value,
+        onChanged: sharing ? null : cluster.setWorkerUsesGpu,
+      ),
     );
   }
 
@@ -224,7 +248,7 @@ class SettingsView extends GetView<SettingsController> {
 
   Widget _buildInferenceGroup(BuildContext context) {
     return AppGroup(dividerIndent: 60, children: [
-      AppRow(
+      if (PlatformCapabilities.supportsLocalInference) AppRow(
         icon: Icons.phone_iphone_rounded,
         title: 'Local (on-device)',
         subtitle: _localSubtitle(),
@@ -233,8 +257,10 @@ class SettingsView extends GetView<SettingsController> {
       ),
       AppRow(
         icon: Icons.cloud_outlined,
-        title: 'Cloud API',
-        subtitle: providerLabel(controller),
+        title: 'API provider',
+        subtitle: PlatformCapabilities.supportsLocalInference
+            ? providerLabel(controller)
+            : 'Cloud or local OpenAI-compatible server (Custom API)',
         selected: controller.inferenceMode.value == 'cloud',
         onTap: () => controller.setInferenceMode('cloud'),
       ),
@@ -639,8 +665,12 @@ class SettingsView extends GetView<SettingsController> {
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
         child: Text(
-            'Applies to both GGUF and LiteRT models. Takes effect the next '
-            'time a model is loaded.',
+            PlatformCapabilities.isWindows
+                ? 'GGUF uses Vulkan on supported GPUs, including NVIDIA RTX. '
+                    'Layers are limited to available VRAM. CPU Safe disables '
+                    'GPU offload. Reload the model after changing this setting.'
+                : 'Applies to both GGUF and LiteRT models. Takes effect the next '
+                    'time a model is loaded.',
             style: t.small),
       ),
     ]);

@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../core/constants.dart';
+import '../core/platform_capabilities.dart';
 import '../core/haptics.dart';
 import '../core/ui.dart';
 import '../services/hive_service.dart';
@@ -140,9 +141,14 @@ class SettingsController extends GetxController {
   void _loadSettings() {
     final savedTheme = _hive.getSetting<String>('theme_mode');
     themeMode.value = _themeModeFromString(savedTheme);
-    inferenceMode.value = _hive.getSetting(AppConstants.keyInferenceMode,
-            defaultValue: 'local') ??
-        'local';
+    final savedMode = _hive.getSetting<String>(AppConstants.keyInferenceMode);
+    inferenceMode.value = PlatformCapabilities.supportsLocalInference
+        ? savedMode ?? 'local'
+        : 'cloud';
+    if (savedMode != inferenceMode.value) {
+      unawaited(_hive.setSetting(
+          AppConstants.keyInferenceMode, inferenceMode.value));
+    }
     cloudProvider.value = _hive.getSetting(AppConstants.keyCloudProvider,
             defaultValue: 'openrouter') ??
         'openrouter';
@@ -341,6 +347,12 @@ class SettingsController extends GetxController {
   }
 
   Future<void> setInferenceMode(String mode) async {
+    if (mode == 'local' && !PlatformCapabilities.supportsLocalInference) {
+      showToast('Local inference unavailable',
+          'Use an API provider or connect a local server through Custom API.',
+          tone: ToastTone.warning);
+      return;
+    }
     inferenceMode.value = mode;
     await _hive.setSetting(AppConstants.keyInferenceMode, mode);
   }
@@ -739,6 +751,10 @@ class SettingsController extends GetxController {
   }
 
   Future<void> _detectImageGpu() async {
+    if (!PlatformCapabilities.supportsLocalImageGeneration) {
+      imageGpuVendor.value = 'unavailable';
+      return;
+    }
     try {
       imageGpuVendor.value = await SdFlutterAndroid.detectGpuVendor();
     } catch (_) {

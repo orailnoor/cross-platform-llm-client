@@ -70,7 +70,7 @@ class CloudService extends GetxService {
     if (_provider == 'custom') {
       final baseUrl =
           _hive.getSetting(AppConstants.keyCustomCloudBaseUrl) ?? '';
-      return _apiKey.isNotEmpty && _model.isNotEmpty && baseUrl.isNotEmpty;
+      return _model.isNotEmpty && baseUrl.isNotEmpty;
     }
     return _apiKey.isNotEmpty;
   }
@@ -107,7 +107,9 @@ class CloudService extends GetxService {
     void Function(String token)? onToken,
   }) async {
     if (!isConfigured) {
-      return 'ERROR: No API key configured for $_provider. Go to Settings.';
+      return _provider == 'custom'
+          ? 'ERROR: Configure a base URL and model ID in Models > Custom API.'
+          : 'ERROR: No API key configured for $_provider. Go to Settings.';
     }
 
     try {
@@ -555,7 +557,7 @@ class CloudService extends GetxService {
     final response = await _post(
       Uri.parse(endpoint),
       headers: {
-        'Authorization': 'Bearer $_apiKey',
+        if (_apiKey.isNotEmpty) 'Authorization': 'Bearer $_apiKey',
         'Content-Type': 'application/json',
         ...extraHeaders,
       },
@@ -587,7 +589,7 @@ class CloudService extends GetxService {
   }) async {
     final request = http.Request('POST', Uri.parse(endpoint));
     request.headers.addAll({
-      'Authorization': 'Bearer $_apiKey',
+      if (_apiKey.isNotEmpty) 'Authorization': 'Bearer $_apiKey',
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream',
       ...extraHeaders,
