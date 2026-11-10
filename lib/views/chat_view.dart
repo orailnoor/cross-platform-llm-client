@@ -13,6 +13,7 @@ import '../controllers/home_controller.dart';
 import '../services/cluster_service.dart';
 import '../services/inference_service.dart';
 import '../services/local_image_service.dart';
+import '../core/platform_capabilities.dart';
 import '../ffi/sd_ffi_bindings.dart';
 import '../utils/thought_parser.dart';
 import '../widgets/attachment_preview.dart';
@@ -1023,6 +1024,10 @@ class ChatView extends GetView<ChatController> {
                       bgColor = _appleBlue(context);
                       iconData = Icons.arrow_upward_rounded;
                       onTap = controller.sendMessage;
+                    } else if (!PlatformCapabilities.supportsSpeechRecognition) {
+                      bgColor = Colors.transparent;
+                      iconData = Icons.arrow_upward_rounded;
+                      onTap = null;
                     } else {
                       // Empty → bare mic glyph
                       bgColor = Colors.transparent;
@@ -1176,7 +1181,7 @@ class _AttachButton extends StatelessWidget {
     final dark = Theme.of(ctx).brightness == Brightness.dark;
 
     final items = [
-      (
+      if (PlatformCapabilities.supportsCameraCapture) (
         icon: Icons.photo_camera_outlined,
         label: 'Camera',
         enabled: allowMedia,

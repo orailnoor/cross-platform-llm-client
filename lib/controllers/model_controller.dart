@@ -138,15 +138,23 @@ class ModelController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    if (!_inference.supportsLocalInference) {
+      modelScope.value = 'online';
+      return;
+    }
     _loadCustomModels();
     availableModels.value = AppConstants.availableModels
         .map((m) => AiModel.fromMap(m))
         // Core ML (Apple NPU) models only run on iOS/macOS.
         .where((m) => supportsAppleNpu || !isNpuModel(m))
+        .where(_supportsModel)
         .toList()
-      ..addAll(customModels);
+      ..addAll(customModels.where(_supportsModel));
     refreshDownloaded();
   }
+
+  bool _supportsModel(AiModel model) => !Platform.isWindows ||
+      (model.runtime == AiModel.runtimeLlama && !model.isVision);
 
   void _loadCustomModels() {
     final raw =
@@ -170,8 +178,8 @@ class ModelController extends GetxController {
     visionFiles
       ..clear()
       ..addAll(allFiles.where(_isVisionProjectorFile));
-    final files =
-        allFiles.where((file) => !_isAuxiliaryImageFile(file)).toList();
+    final files = allFiles.where((file) => !_isAuxiliaryImageFile(file) &&
+        (!Platform.isWindows || file.toLowerCase().endsWith('.gguf'))).toList();
     downloadedFiles.value = files;
     for (final file in files) {
       fileSizes[file] = await _download.getModelSize(file);
@@ -596,6 +604,11 @@ class ModelController extends GetxController {
   }
 
   Future<void> loadModel(String filename) async {
+    if (Platform.isWindows && !filename.toLowerCase().endsWith('.gguf')) {
+      showToast('Unsupported Model', 'Windows supports GGUF text models only.',
+          tone: ToastTone.error);
+      return;
+    }
     if (_inference.isLoadingModel.value) {
       showToast('Model Loading', 'Another model is already loading.',
           tone: ToastTone.warning);
@@ -1133,7 +1146,8 @@ class ModelController extends GetxController {
     String? partialImportPath;
     try {
       FilePickerResult? result = await FilePicker.pickFiles(
-        type: FileType.any,
+        type: Platform.isWindows ? FileType.custom : FileType.any,
+        allowedExtensions: Platform.isWindows ? ['gguf'] : null,
         withData: false,
         withReadStream: true,
       );
@@ -1143,6 +1157,11 @@ class ModelController extends GetxController {
         final filename = picked.name;
         final lower = filename.toLowerCase();
 
+        if (Platform.isWindows && !lower.endsWith('.gguf')) {
+          showToast('Unsupported Model', 'Windows supports .gguf text models only.',
+              tone: ToastTone.warning);
+          return;
+        }
         if (!lower.endsWith('.gguf') &&
             !lower.endsWith('.litertlm') &&
             !lower.endsWith('.safetensors')) {

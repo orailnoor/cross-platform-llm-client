@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../core/ui.dart';
+import '../services/image_export_service.dart';
 
 class ImageViewer extends StatefulWidget {
   final String base64Image;
@@ -41,20 +41,11 @@ class _ImageViewerState extends State<ImageViewer> {
   Future<void> _download() async {
     setState(() => _isSaving = true);
     try {
-      // Request permission if needed
-      final hasAccess = await Gal.hasAccess();
-      if (!hasAccess) {
-        await Gal.requestAccess();
-      }
-      await Gal.putImageBytes(_bytes);
+      final destination = await ImageExportService.saveImages([_bytes]);
+      if (destination == null) return;
       if (mounted) {
-        showToast('Saved', 'Image saved to gallery',
+        showToast('Saved', 'Image saved to $destination',
             tone: ToastTone.success, duration: const Duration(seconds: 2));
-      }
-    } on GalException catch (e) {
-      if (mounted) {
-        showToast('Not saved', 'Failed to save image: ${e.type.message}',
-            tone: ToastTone.error);
       }
     } catch (e) {
       if (mounted) {

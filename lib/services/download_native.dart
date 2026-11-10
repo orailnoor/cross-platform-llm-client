@@ -24,14 +24,16 @@ Future<List<String>> getDownloadedModels(String modelsDir) async {
   if (!await dir.exists()) return [];
   return dir
       .listSync()
-      .where((f) =>
-          f.path.endsWith('.gguf') ||
-          f.path.endsWith('.litertlm') ||
-          f.path.endsWith('.safetensors') ||
-          f.path.endsWith('.coreml') ||
-          f.path.endsWith('.mlpackage') ||
-          f.path.endsWith('.mlmodelc'))
-      .map((f) => f.path.split('/').last)
+      .where((f) {
+        final path = f.path.toLowerCase();
+        return path.endsWith('.gguf') ||
+            path.endsWith('.litertlm') ||
+            path.endsWith('.safetensors') ||
+            path.endsWith('.coreml') ||
+            path.endsWith('.mlpackage') ||
+            path.endsWith('.mlmodelc');
+      })
+      .map((f) => f.path.split(RegExp(r'[/\\]')).last)
       .toList();
 }
 
@@ -113,7 +115,7 @@ Future<String> downloadModel({
 }) async {
   final partial = File('$savePath$partialDownloadSuffix');
   final cancelToken = CancelToken();
-  final filename = savePath.split('/').last;
+  final filename = savePath.split(RegExp(r'[/\\]')).last;
   _cancelTokens[filename] = cancelToken;
   RandomAccessFile? sink;
 

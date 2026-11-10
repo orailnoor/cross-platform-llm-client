@@ -2,17 +2,18 @@ import 'dart:async';
 import 'package:get/get.dart';
 import 'hive_service.dart';
 import '../core/constants.dart';
+import '../core/platform_capabilities.dart';
 import 'device_info_service.dart';
 import 'app_log_service.dart';
 import 'cluster_service.dart';
 import 'stop_sequence_filter.dart';
 
-// Conditionally import llama_flutter_android — only on Android
+// The native engine selects the Android, iOS or Windows transport.
 import 'inference_android.dart' if (dart.library.html) 'inference_stub.dart'
     as platform;
 
 /// Cross-platform inference service.
-/// - Android / iOS: uses llama_flutter_android for local GGUF models
+/// - Android / iOS / Windows: uses llama_flutter_android for local GGUF models
 /// - Android: uses flutter_litert_lm for LiteRT-LM models
 /// - Web: cloud-only mode (local inference coming soon)
 class InferenceService extends GetxService {
@@ -139,7 +140,7 @@ class InferenceService extends GetxService {
             .applyForNextLoad(modelPath, modelName: modelName);
       }
 
-      final requestedModelName = modelName ?? modelPath.split('/').last;
+      final requestedModelName = modelName ?? modelPath.split(RegExp(r'[/\\]')).last;
       var activeModelName = requestedModelName;
       var result = await _loadModelOnEngine(
         modelPath: modelPath,
@@ -152,7 +153,8 @@ class InferenceService extends GetxService {
         clearLiteRtCache: contextChanged,
         tryLiteRtGpu: shouldTryLiteRtGpu,
         enableLiteRtVision: enableLiteRtVision,
-        allowGgufGpu: allowGgufGpu && clusterWorkers == 0,
+        allowGgufGpu: allowGgufGpu &&
+            (clusterWorkers == 0 || PlatformCapabilities.isWindows),
         mmprojPath: mmprojPath,
       );
 
@@ -206,7 +208,7 @@ class InferenceService extends GetxService {
       if (clusterWorkers > 0) {
         final cluster = Get.find<ClusterService>();
         await cluster.refreshSplit(modelPath);
-        return 'Model loaded across ${cluster.splitSummary ?? '${clusterWorkers + 1} phones'}.';
+        return 'Model loaded across ${cluster.splitSummary ?? '${clusterWorkers + 1} devices'}.';
       }
       return result.message;
     } catch (e) {
@@ -473,9 +475,10 @@ class InferenceService extends GetxService {
     bool allowGgufGpu = false,
     String? mmprojPath,
   }) async {
-    // Auto fast: if a LiteRT GPU load fails, retry this load on the CPU.
+    // Auto fast retries failed GPU loads on the CPU.
     // Nothing is remembered — the next load tries the GPU again.
-    final fallbackToCpu = tryLiteRtGpu && liteRtPerformanceMode == 'auto_fast';
+    final fallbackToCpu = liteRtPerformanceMode == 'auto_fast' &&
+        (tryLiteRtGpu || (PlatformCapabilities.isWindows && allowGgufGpu));
     Future<platform.LoadResult> loadOnCpu() {
       modelLoadProgress.value = 0.0;
       return _engine!.loadModel(
@@ -488,6 +491,8 @@ class InferenceService extends GetxService {
         forceLiteRtCpu: true,
         clearLiteRtCache: true,
         enableLiteRtVision: enableLiteRtVision,
+        allowGgufGpu: false,
+        mmprojPath: mmprojPath,
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
     }
@@ -508,9 +513,13 @@ class InferenceService extends GetxService {
         onProgress: (p) => modelLoadProgress.value = _normalizeProgress(p),
       );
       if (result.success || !fallbackToCpu) return result;
+      Get.find<AppLogService>().error('GPU model load failed; retrying CPU',
+          details: result.message);
       return await loadOnCpu();
     } catch (e) {
       if (fallbackToCpu) {
+        Get.find<AppLogService>().error('GPU model load failed; retrying CPU',
+            details: e);
         try {
           return await loadOnCpu();
         } catch (cpuError) {

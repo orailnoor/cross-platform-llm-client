@@ -1,6 +1,46 @@
 import 'dart:io';
+import 'dart:ffi';
 
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:ffi/ffi.dart';
 import 'package:llama_flutter_android/llama_flutter_android.dart';
+
+final class _MemoryStatus extends Struct {
+  @Uint32()
+  external int length;
+  @Uint32()
+  external int memoryLoad;
+  @Uint64()
+  external int totalPhysical;
+  @Uint64()
+  external int availablePhysical;
+  @Uint64()
+  external int totalPageFile;
+  @Uint64()
+  external int availablePageFile;
+  @Uint64()
+  external int totalVirtual;
+  @Uint64()
+  external int availableVirtual;
+  @Uint64()
+  external int availableExtendedVirtual;
+}
+
+double _windowsAvailableRamGB() {
+  final status = calloc<_MemoryStatus>();
+  try {
+    status.ref.length = sizeOf<_MemoryStatus>();
+    final readMemory = DynamicLibrary.open('kernel32.dll').lookupFunction<
+        Int32 Function(Pointer<_MemoryStatus>),
+        int Function(Pointer<_MemoryStatus>)>('GlobalMemoryStatusEx');
+    if (readMemory(status) == 0) {
+      throw StateError('GlobalMemoryStatusEx failed');
+    }
+    return status.ref.availablePhysical / (1024 * 1024 * 1024);
+  } finally {
+    calloc.free(status);
+  }
+}
 
 /// Detected SoC family.
 enum SocFamily {
@@ -132,7 +172,7 @@ SocFamily _detectSocFamily(String cpuinfo, String hardware) {
   return SocFamily.unknown;
 }
 
-/// Native (Android/iOS/macOS/Linux) device info implementation.
+/// Native device info implementation.
 Future<Map<String, dynamic>> getDeviceInfo() async {
   double totalRam = 4.0;
   double availableRam = 2.0;
@@ -167,6 +207,11 @@ Future<Map<String, dynamic>> getDeviceInfo() async {
       totalRam = gpuInfo.deviceLocalMemoryBytes / (1024 * 1024 * 1024);
       availableRam = gpuInfo.freeRamBytes / (1024 * 1024 * 1024);
       socFamily = SocFamily.apple;
+    } else if (Platform.isWindows) {
+      final info = await DeviceInfoPlugin().windowsInfo;
+      totalRam = info.systemMemoryInMegabytes / 1024;
+      availableRam = _windowsAvailableRamGB();
+      hardware = info.productName;
     } else if (Platform.isMacOS) {
       totalRam = 16.0;
       availableRam = 8.0;

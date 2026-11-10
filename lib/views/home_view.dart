@@ -8,6 +8,7 @@ import 'model_view.dart';
 import 'server_view.dart';
 import 'settings_view.dart';
 import '../core/haptics.dart';
+import '../core/platform_capabilities.dart';
 
 class HomeView extends GetView<HomeController> {
   const HomeView({super.key});
@@ -31,14 +32,11 @@ class HomeView extends GetView<HomeController> {
         label: 'Settings'),
   ];
 
-  bool get _isWide {
-    // Force bottom navbar for all layouts per user request
-    return false;
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isWide = PlatformCapabilities.isWindows &&
+        MediaQuery.sizeOf(context).width >= 800;
     return Obx(() => Scaffold(
           key: controller.scaffoldKey,
           backgroundColor: isDark ? Colors.black : Colors.white,
@@ -57,7 +55,7 @@ class HomeView extends GetView<HomeController> {
                 SettingsView()
               ],
             );
-            if (_isWide) {
+            if (isWide) {
               return Row(children: [
                 _buildSidebar(context, isDark),
                 VerticalDivider(
@@ -72,7 +70,7 @@ class HomeView extends GetView<HomeController> {
             return content;
           }),
           bottomNavigationBar:
-              _isWide ? null : _buildBottomNav(context, isDark),
+              isWide ? null : _buildBottomNav(context, isDark),
         ));
   }
 
